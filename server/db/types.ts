@@ -70,3 +70,24 @@ export interface ProviderKeyRow {
 	created_at: Date;
 	updated_at: Date;
 }
+
+export interface SkillRow {
+	id: string;
+	scope: "platform" | "team" | "user";
+	owner_id: string;
+	name: string;
+	description: string;
+	storage_key: string;
+	created_at: Date;
+	updated_at: Date;
+}
+
+export interface UserFileRow {
+	id: string;
+	user_id: string;
+	filename: string;
+	content_type: string | null;
+	size_bytes: number | null;
+	storage_key: string;
+	created_at: Date;
+}

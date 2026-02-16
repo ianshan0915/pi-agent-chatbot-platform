@@ -19,9 +19,12 @@ import sessionsRouter from "./routes/sessions.js";
 import settingsRouter from "./routes/settings.js";
 import importRouter from "./routes/import.js";
 import { createProviderKeysRouter } from "./routes/provider-keys.js";
+import { createSkillsRouter } from "./routes/skills.js";
+import { createFilesRouter } from "./routes/files.js";
 import { requireAuth } from "./auth/middleware.js";
 import { createCryptoService } from "./services/crypto.js";
 import { ProcessPool } from "./services/process-pool.js";
+import { createStorageService } from "./services/storage.js";
 import { TenantBridge, type TenantBridgeOptions } from "./agent-service.js";
 import type { BridgeOptions } from "./ws-bridge.js";
 
@@ -36,6 +39,7 @@ async function main() {
 	// Initialize services
 	const crypto = createCryptoService();
 	const processPool = new ProcessPool();
+	const storageService = createStorageService();
 
 	const app = express();
 
@@ -53,6 +57,8 @@ async function main() {
 	app.use("/api/settings", requireAuth, apiRateLimit, settingsRouter);
 	app.use("/api/import", requireAuth, apiRateLimit, importRouter);
 	app.use("/api/provider-keys", apiRateLimit, createProviderKeysRouter(crypto));
+	app.use("/api/skills", apiRateLimit, createSkillsRouter(storageService));
+	app.use("/api/files", apiRateLimit, createFilesRouter(storageService));
 
 	// --- WebSocket ---
 	const server = createServer(app);
@@ -85,6 +91,7 @@ async function main() {
 			processPool,
 			crypto,
 			db,
+			storage: storageService,
 		};
 
 		const bridge = new TenantBridge(ws, tenantOptions);

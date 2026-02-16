@@ -15,6 +15,8 @@ import * as readline from "node:readline";
 import type { WebSocket } from "ws";
 import type { CryptoService } from "./services/crypto.js";
 import type { ProcessPool } from "./services/process-pool.js";
+import type { StorageService } from "./services/storage.js";
+import { resolveSkillsForUser, type ResolvedSkills } from "./services/skill-resolver.js";
 import type { Database, ProviderKeyRow } from "./db/types.js";
 import { WsBridge, PROVIDER_ENV_MAP, type BridgeOptions } from "./ws-bridge.js";
 
@@ -31,6 +33,7 @@ export interface TenantBridgeOptions extends BridgeOptions {
 	processPool: ProcessPool;
 	crypto: CryptoService;
 	db: Database;
+	storage: StorageService;
 }
 
 export class TenantBridge extends WsBridge {
@@ -39,6 +42,8 @@ export class TenantBridge extends WsBridge {
 	private processPool: ProcessPool;
 	private crypto: CryptoService;
 	private db: Database;
+	private storage: StorageService;
+	private resolvedSkills: ResolvedSkills | null = null;
 
 	constructor(ws: WebSocket, options: TenantBridgeOptions) {
 		super(ws, options);
@@ -47,6 +52,7 @@ export class TenantBridge extends WsBridge {
 		this.processPool = options.processPool;
 		this.crypto = options.crypto;
 		this.db = options.db;
+		this.storage = options.storage;
 	}
 
 	/**
@@ -63,6 +69,18 @@ export class TenantBridge extends WsBridge {
 	private async startAsync(): Promise<void> {
 		// 1. Fetch and decrypt provider keys for this team
 		await this.injectTeamKeys();
+
+		// 1b. Resolve skills for this user
+		try {
+			this.resolvedSkills = await resolveSkillsForUser(
+				this.db, this.storage, this.user.userId, this.user.teamId,
+			);
+			if (this.resolvedSkills.skillPaths.length > 0) {
+				console.log(`[tenant-bridge] Resolved ${this.resolvedSkills.skillPaths.length} skill(s)`);
+			}
+		} catch (err) {
+			console.error("[tenant-bridge] Failed to resolve skills:", err);
+		}
 
 		// 2. Check for existing process (reconnection)
 		const existingSessionId = this.sessionId;
@@ -161,6 +179,13 @@ export class TenantBridge extends WsBridge {
 		if (this.options.provider) args.push("--provider", this.options.provider);
 		if (this.options.model) args.push("--model", this.options.model);
 		if (this.options.args) args.push(...this.options.args);
+
+		// Inject resolved skill paths
+		if (this.resolvedSkills) {
+			for (const skillPath of this.resolvedSkills.skillPaths) {
+				args.push("--skill", skillPath);
+			}
+		}
 
 		console.log(`[tenant-bridge] Spawning: ${command} ${args.join(" ")}`);
 
@@ -284,6 +309,10 @@ export class TenantBridge extends WsBridge {
 		if (this.sessionId) {
 			this.processPool.release(this.sessionId);
 		}
+
+		// Clean up skill temp directories
+		this.resolvedSkills?.cleanup();
+		this.resolvedSkills = null;
 
 		console.log("[tenant-bridge] Released process to pool");
 	}

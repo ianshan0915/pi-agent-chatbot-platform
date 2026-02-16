@@ -24,8 +24,10 @@ import {
 	setAppStorage,
 } from "@mariozechner/pi-web-ui";
 import "./components/ProviderKeysPanel.js";
+import "./components/SkillsPanel.js";
+import "./components/FilesPanel.js";
 import { html, render } from "lit";
-import { History, KeyRound, LogOut, RotateCcw, Settings, Wifi, WifiOff } from "lucide";
+import { FileUp, History, KeyRound, LogOut, Puzzle, RotateCcw, Settings, Wifi, WifiOff } from "lucide";
 import { AuthClient } from "./auth/auth-client.js";
 import "./auth/login-page.js";
 import { RemoteAgent } from "./remote-agent.js";
@@ -406,6 +408,59 @@ const renderApp = () => {
 								title: "Provider Keys",
 							})
 						: null}
+
+					<!-- Skills -->
+					${Button({
+						variant: "ghost",
+						size: "sm",
+						children: icon(Puzzle, "sm"),
+						onClick: () => {
+							const dialog = document.createElement("dialog");
+							dialog.innerHTML = `
+								<div style="min-width: 500px; max-width: 600px; padding: 1rem;">
+									<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+										<h2 style="margin: 0; font-size: 1.125rem;">Skills</h2>
+										<button onclick="this.closest('dialog').close()" style="background: none; border: none; cursor: pointer; font-size: 1.25rem;">&times;</button>
+									</div>
+									<skills-panel></skills-panel>
+								</div>
+							`;
+							const panel = dialog.querySelector("skills-panel") as any;
+							if (panel) {
+								panel.getToken = () => authClient.token;
+								panel.userRole = user?.role || "member";
+							}
+							document.body.appendChild(dialog);
+							dialog.showModal();
+							dialog.addEventListener("close", () => dialog.remove());
+						},
+						title: "Skills",
+					})}
+
+					<!-- Files -->
+					${Button({
+						variant: "ghost",
+						size: "sm",
+						children: icon(FileUp, "sm"),
+						onClick: () => {
+							const dialog = document.createElement("dialog");
+							dialog.innerHTML = `
+								<div style="min-width: 500px; max-width: 600px; padding: 1rem;">
+									<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+										<h2 style="margin: 0; font-size: 1.125rem;">Files</h2>
+										<button onclick="this.closest('dialog').close()" style="background: none; border: none; cursor: pointer; font-size: 1.25rem;">&times;</button>
+									</div>
+									<files-panel></files-panel>
+								</div>
+							`;
+							const panel = dialog.querySelector("files-panel") as any;
+							if (panel) panel.getToken = () => authClient.token;
+							document.body.appendChild(dialog);
+							dialog.showModal();
+							dialog.addEventListener("close", () => dialog.remove());
+						},
+						title: "Files",
+					})}
 
 					<theme-toggle></theme-toggle>
 
