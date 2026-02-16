@@ -2,8 +2,10 @@
  * Skill Resolver: downloads skill files to temp dirs for CLI injection.
  *
  * Resolves all skills visible to a user (platform + team + user scope),
- * downloads SKILL.md from StorageService to temp directories, and returns
+ * downloads skill content from StorageService to temp directories, and returns
  * paths suitable for `--skill <path>` CLI args.
+ *
+ * Supports both single SKILL.md files and full zip bundle directory trees.
  */
 
 import * as fs from "node:fs/promises";
@@ -26,7 +28,7 @@ export async function resolveSkillsForUser(
 	teamId: string,
 ): Promise<ResolvedSkills> {
 	const result = await db.query<SkillRow>(
-		`SELECT name, storage_key FROM skills
+		`SELECT name, format, storage_key FROM skills
 		 WHERE (scope = 'platform')
 		    OR (scope = 'team' AND owner_id = $1)
 		    OR (scope = 'user' AND owner_id = $2)
@@ -46,8 +48,25 @@ export async function resolveSkillsForUser(
 			const skillDir = path.join(tmpBase, skill.name);
 			await fs.mkdir(skillDir, { recursive: true });
 
-			const data = await storage.download(skill.storage_key);
-			await fs.writeFile(path.join(skillDir, "SKILL.md"), data);
+			if (skill.format === "zip") {
+				// Restore full directory tree from stored files
+				const keys = await storage.listByPrefix(skill.storage_key);
+				for (const key of keys) {
+					const relativePath = key.startsWith(skill.storage_key)
+						? key.slice(skill.storage_key.length)
+						: key;
+					if (!relativePath) continue;
+
+					const filePath = path.join(skillDir, relativePath);
+					await fs.mkdir(path.dirname(filePath), { recursive: true });
+					const data = await storage.download(key);
+					await fs.writeFile(filePath, data);
+				}
+			} else {
+				// Single SKILL.md file
+				const data = await storage.download(skill.storage_key);
+				await fs.writeFile(path.join(skillDir, "SKILL.md"), data);
+			}
 
 			skillPaths.push(skillDir);
 		} catch (err) {

@@ -261,7 +261,7 @@ export class SkillsPanel extends LitElement {
 			${this.loading
 				? html`<div class="empty">Loading...</div>`
 				: this.skills.length === 0
-					? html`<div class="empty">No skills configured. Upload a SKILL.md below.</div>`
+					? html`<div class="empty">No skills configured. Upload a SKILL.md or skill zip bundle below.</div>`
 					: html`
 						<div class="skill-list">
 							${this.skills.map(
@@ -290,10 +290,10 @@ export class SkillsPanel extends LitElement {
 						</select>
 					</div>
 					<div class="form-field">
-						<label>SKILL.md File</label>
+						<label>Skill File</label>
 						<input
 							type="file"
-							accept=".md"
+							accept=".md,.zip"
 							@change=${(e: Event) => {
 								const input = e.target as HTMLInputElement;
 								this.selectedFile = input.files?.[0] || null;

@@ -77,6 +77,7 @@ export interface SkillRow {
 	owner_id: string;
 	name: string;
 	description: string;
+	format: "md" | "zip";
 	storage_key: string;
 	created_at: Date;
 	updated_at: Date;

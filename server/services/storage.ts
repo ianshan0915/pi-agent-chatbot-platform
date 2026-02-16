@@ -13,6 +13,10 @@ export interface StorageService {
 	download(key: string): Promise<Buffer>;
 	delete(key: string): Promise<void>;
 	exists(key: string): Promise<boolean>;
+	/** List all keys under a given prefix (e.g. "skills/owner/name/") */
+	listByPrefix(prefix: string): Promise<string[]>;
+	/** Recursively delete all files under a given prefix */
+	deleteByPrefix(prefix: string): Promise<void>;
 }
 
 const DEFAULT_BASE_DIR = "./data/storage";
@@ -60,6 +64,42 @@ export class LocalFsStorageService implements StorageService {
 			return true;
 		} catch {
 			return false;
+		}
+	}
+
+	async listByPrefix(prefix: string): Promise<string[]> {
+		const dirPath = this.resolvePath(prefix);
+		const results: string[] = [];
+
+		const walk = async (dir: string) => {
+			let entries;
+			try {
+				entries = await fs.readdir(dir, { withFileTypes: true });
+			} catch (err: any) {
+				if (err.code === "ENOENT") return;
+				throw err;
+			}
+			for (const entry of entries) {
+				const fullPath = path.join(dir, entry.name);
+				if (entry.isDirectory()) {
+					await walk(fullPath);
+				} else if (entry.isFile()) {
+					// Return the key relative to baseDir
+					results.push(path.relative(this.baseDir, fullPath));
+				}
+			}
+		};
+
+		await walk(dirPath);
+		return results;
+	}
+
+	async deleteByPrefix(prefix: string): Promise<void> {
+		const dirPath = this.resolvePath(prefix);
+		try {
+			await fs.rm(dirPath, { recursive: true, force: true });
+		} catch (err: any) {
+			if (err.code !== "ENOENT") throw err;
 		}
 	}
 }
