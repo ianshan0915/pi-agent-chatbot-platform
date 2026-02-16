@@ -1,4 +1,4 @@
-import type { StorageBackend, StorageTransaction } from "@mariozechner/pi-web-ui";
+import type { StorageBackend, StorageTransaction } from "../web-ui/index.js";
 
 export interface ApiStorageBackendOptions {
 	baseUrl: string;

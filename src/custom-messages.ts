@@ -5,8 +5,8 @@
  */
 
 import type { Message } from "@mariozechner/pi-ai";
-import type { AgentMessage } from "@mariozechner/pi-web-ui";
-import { defaultConvertToLlm } from "@mariozechner/pi-web-ui";
+import type { AgentMessage } from "./web-ui/index.js";
+import { defaultConvertToLlm } from "./web-ui/index.js";
 
 /**
  * Custom message transformer — currently just passes through to default.

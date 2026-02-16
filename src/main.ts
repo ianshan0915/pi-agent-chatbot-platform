@@ -22,7 +22,7 @@ import {
 	SettingsDialog,
 	SettingsStore,
 	setAppStorage,
-} from "@mariozechner/pi-web-ui";
+} from "./web-ui/index.js";
 import "./components/ProviderKeysPanel.js";
 import "./components/SkillsPanel.js";
 import "./components/FilesPanel.js";
@@ -212,9 +212,8 @@ function connectWebSocket(): void {
 		// Set up ChatPanel with the remote agent
 		await chatPanel.setAgent(remoteAgent as unknown as Agent, {
 			onApiKeyRequired: async (_provider: string) => {
-				// API keys are managed server-side in this platform
-				console.warn("API key required — configure in team settings");
-				return false;
+				// API keys are managed server-side — always proceed with the send
+				return true;
 			},
 			toolsFactory: () => {
 				// No browser-side tools — all tools run on the server

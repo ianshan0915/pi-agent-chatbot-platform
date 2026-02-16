@@ -21,11 +21,15 @@ const PROVIDER_LABELS: Record<string, string> = {
 	groq: "Groq",
 	cerebras: "Cerebras",
 	xai: "xAI",
+	zai: "ZAI",
 	openrouter: "OpenRouter",
 	"vercel-ai-gateway": "Vercel AI Gateway",
 	mistral: "Mistral",
 	minimax: "MiniMax",
+	"minimax-cn": "MiniMax (CN)",
 	huggingface: "Hugging Face",
+	opencode: "OpenCode",
+	"kimi-coding": "Kimi Coding",
 };
 
 @customElement("provider-keys-panel")

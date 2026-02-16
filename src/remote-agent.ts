@@ -15,7 +15,7 @@ import type {
 	ThinkingLevel,
 } from "@mariozechner/pi-agent-core";
 import type { ImageContent, Model } from "@mariozechner/pi-ai";
-import { convertAttachments, isUserMessageWithAttachments } from "@mariozechner/pi-web-ui";
+import { convertAttachments, isUserMessageWithAttachments } from "./web-ui/index.js";
 
 // Minimal Model placeholder for initial state
 const PLACEHOLDER_MODEL: Model<any> = {
