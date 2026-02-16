@@ -18,8 +18,12 @@ import authRouter from "./routes/auth.js";
 import sessionsRouter from "./routes/sessions.js";
 import settingsRouter from "./routes/settings.js";
 import importRouter from "./routes/import.js";
-import { WsBridge, type BridgeOptions } from "./ws-bridge.js";
+import { createProviderKeysRouter } from "./routes/provider-keys.js";
 import { requireAuth } from "./auth/middleware.js";
+import { createCryptoService } from "./services/crypto.js";
+import { ProcessPool } from "./services/process-pool.js";
+import { TenantBridge, type TenantBridgeOptions } from "./agent-service.js";
+import type { BridgeOptions } from "./ws-bridge.js";
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const isDev = process.env.NODE_ENV !== "production";
@@ -29,14 +33,18 @@ async function main() {
 	const db = createDatabase();
 	await runMigrations(db);
 
+	// Initialize services
+	const crypto = createCryptoService();
+	const processPool = new ProcessPool();
+
 	const app = express();
 
 	// Body parsing
 	app.use(express.json());
 
-	// Health check (no auth required)
+	// Health check (no auth required) — includes process pool stats
 	app.get("/healthz", (_req, res) => {
-		res.json({ status: "ok" });
+		res.json({ status: "ok", processPool: processPool.stats() });
 	});
 
 	// --- API Routes ---
@@ -44,6 +52,7 @@ async function main() {
 	app.use("/api/sessions", requireAuth, apiRateLimit, sessionsRouter);
 	app.use("/api/settings", requireAuth, apiRateLimit, settingsRouter);
 	app.use("/api/import", requireAuth, apiRateLimit, importRouter);
+	app.use("/api/provider-keys", apiRateLimit, createProviderKeysRouter(crypto));
 
 	// --- WebSocket ---
 	const server = createServer(app);
@@ -61,7 +70,24 @@ async function main() {
 		if (url.searchParams.has("provider")) options.provider = url.searchParams.get("provider")!;
 		if (url.searchParams.has("model")) options.model = url.searchParams.get("model")!;
 
-		const bridge = new WsBridge(ws, options);
+		const sessionId = url.searchParams.get("sessionId") || undefined;
+
+		// Use TenantBridge with server-side key management
+		const tenantOptions: TenantBridgeOptions = {
+			...options,
+			user: {
+				userId: user.userId,
+				teamId: user.teamId,
+				email: user.email,
+				role: user.role,
+			},
+			sessionId,
+			processPool,
+			crypto,
+			db,
+		};
+
+		const bridge = new TenantBridge(ws, tenantOptions);
 		bridge.start();
 	});
 
@@ -120,6 +146,21 @@ async function main() {
 
 		server.on("upgrade", handleUpgrade);
 	}
+
+	// Graceful shutdown
+	const gracefulShutdown = async (signal: string) => {
+		console.log(`[server] Received ${signal}, shutting down gracefully...`);
+		await processPool.shutdown();
+		server.close(() => {
+			console.log("[server] HTTP server closed");
+			process.exit(0);
+		});
+		// Force exit after 10s if shutdown hangs
+		setTimeout(() => process.exit(1), 10_000).unref();
+	};
+
+	process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+	process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 	server.listen(PORT, () => {
 		console.log(`[server] Chatbot Platform running at http://localhost:${PORT}`);

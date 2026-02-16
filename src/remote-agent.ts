@@ -48,20 +48,12 @@ export class RemoteAgent {
 	private requestId = 0;
 	private pendingRequests = new Map<string, { resolve: (data: any) => void; reject: (err: Error) => void }>();
 
-	/** Callback invoked when the server reports a missing API key. */
-	public onApiKeyRequired?: (provider: string) => Promise<string | undefined>;
-
 	// These are expected by AgentInterface but are no-ops for remote agent
 	public streamFn: StreamFn = (() => {}) as any;
 	// Always return a dummy key so AgentInterface doesn't prompt for API keys
-	// (the real API key is managed by the server-side coding agent)
+	// (the real API key is managed server-side by the TenantBridge)
 	public getApiKey: (provider: string) => Promise<string | undefined> | string | undefined = () =>
 		"remote-agent-server-side";
-
-	/** Providers for which we've already prompted (avoid infinite loops) */
-	private promptedProviders = new Set<string>();
-	/** Last prompt message, for auto-retry after API key setup */
-	private lastPromptMessage?: string;
 
 	constructor(ws: WebSocket) {
 		this.ws = ws;
@@ -140,9 +132,6 @@ export class RemoteAgent {
 				message = this.extractText(input);
 			}
 		}
-
-		// Save for auto-retry after API key setup
-		this.lastPromptMessage = message;
 
 		console.log("[RemoteAgent] prompt:", message);
 		await this.sendCommand({ type: "prompt", message, images: resolvedImages });
@@ -293,16 +282,6 @@ export class RemoteAgent {
 	}
 
 	/**
-	 * Set an API key for a provider. The bridge will restart the pi process
-	 * with the key injected as an environment variable.
-	 */
-	async setApiKey(provider: string, apiKey: string): Promise<void> {
-		await this.sendCommand({ type: "bridge_set_api_key", provider, apiKey });
-		// After restart, re-sync state from the new process
-		await this.syncState();
-	}
-
-	/**
 	 * Send an extension UI response back to the server.
 	 */
 	sendExtensionUIResponse(response: any): void {
@@ -352,38 +331,13 @@ export class RemoteAgent {
 			const errorText = data.error || "Unknown server error";
 			console.error("[RemoteAgent] server error:", errorText);
 
-			// Detect "No API key" errors and auto-prompt
+			// Detect "No API key" errors — keys are managed server-side by admins
 			const apiKeyMatch = errorText.match(/No API key found for (\S+)/);
-			if (apiKeyMatch && this.onApiKeyRequired) {
-				const provider = apiKeyMatch[1].replace(/\.$/, ""); // strip trailing period
-				if (this.promptedProviders.has(provider)) {
-					// Already prompted for this provider, don't loop
-					this.showError(errorText);
-					return;
-				}
-				this.promptedProviders.add(provider);
-				this._state.isStreaming = false;
-				// Prompt for API key asynchronously
-				this.onApiKeyRequired(provider)
-					.then(async (apiKey) => {
-						if (apiKey) {
-							await this.setApiKey(provider, apiKey);
-							this.promptedProviders.delete(provider);
-							// Auto-retry the failed prompt
-							if (this.lastPromptMessage) {
-								const msg = this.lastPromptMessage;
-								this.lastPromptMessage = undefined;
-								await this.prompt(msg);
-							} else {
-								this.emit({ type: "agent_end", messages: [] });
-							}
-						} else {
-							this.showError(errorText);
-						}
-					})
-					.catch(() => {
-						this.showError(errorText);
-					});
+			if (apiKeyMatch) {
+				const provider = apiKeyMatch[1].replace(/\.$/, "");
+				this.showError(
+					`No API key configured for ${provider}. Contact your team admin to add the key in Provider Keys settings.`,
+				);
 				return;
 			}
 

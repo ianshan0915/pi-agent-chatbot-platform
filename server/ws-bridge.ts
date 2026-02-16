@@ -12,7 +12,7 @@ import * as readline from "node:readline";
 import type { WebSocket } from "ws";
 
 /** Provider name → environment variable name mapping */
-const PROVIDER_ENV_MAP: Record<string, string> = {
+export const PROVIDER_ENV_MAP: Record<string, string> = {
 	anthropic: "ANTHROPIC_API_KEY",
 	openai: "OPENAI_API_KEY",
 	google: "GEMINI_API_KEY",
@@ -42,16 +42,18 @@ export interface BridgeOptions {
 }
 
 export class WsBridge {
-	private process: ChildProcess | null = null;
-	private rl: readline.Interface | null = null;
-	private closed = false;
+	protected process: ChildProcess | null = null;
+	protected rl: readline.Interface | null = null;
+	protected closed = false;
 	/** Extra env vars injected via set_api_key (persisted across restarts) */
-	private extraEnv: Record<string, string> = {};
+	protected extraEnv: Record<string, string> = {};
+	protected ws: WebSocket;
+	protected options: BridgeOptions;
 
-	constructor(
-		private ws: WebSocket,
-		private options: BridgeOptions = {},
-	) {}
+	constructor(ws: WebSocket, options: BridgeOptions = {}) {
+		this.ws = ws;
+		this.options = options;
+	}
 
 	/**
 	 * Start the bridge: spawn the RPC process and wire up communication.
@@ -105,7 +107,7 @@ export class WsBridge {
 	/**
 	 * Handle set_api_key bridge command: store the key and restart the process.
 	 */
-	private handleSetApiKey(parsed: any): void {
+	protected handleSetApiKey(parsed: any): void {
 		const { provider, apiKey, id } = parsed;
 		const envVar = PROVIDER_ENV_MAP[provider] || `${provider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
 
@@ -128,7 +130,7 @@ export class WsBridge {
 	/**
 	 * Spawn the pi --mode rpc child process.
 	 */
-	private spawnProcess(): void {
+	protected spawnProcess(): void {
 		const { command, commandArgs } = this.resolveCommand();
 		const args = [...commandArgs, "--mode", "rpc"];
 
@@ -194,7 +196,7 @@ export class WsBridge {
 	/**
 	 * Kill the current child process.
 	 */
-	private killProcess(): void {
+	protected killProcess(): void {
 		this.rl?.close();
 		this.rl = null;
 

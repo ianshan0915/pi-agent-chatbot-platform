@@ -23,8 +23,9 @@ import {
 	SettingsStore,
 	setAppStorage,
 } from "@mariozechner/pi-web-ui";
+import "./components/ProviderKeysPanel.js";
 import { html, render } from "lit";
-import { History, LogOut, RotateCcw, Settings, Wifi, WifiOff } from "lucide";
+import { History, KeyRound, LogOut, RotateCcw, Settings, Wifi, WifiOff } from "lucide";
 import { AuthClient } from "./auth/auth-client.js";
 import "./auth/login-page.js";
 import { RemoteAgent } from "./remote-agent.js";
@@ -48,6 +49,8 @@ let currentSessionId: string | undefined;
 let currentTitle = "";
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+let reconnectDelay = 1000; // Exponential backoff: 1s → 2s → 4s → ... → 30s max
+const MAX_RECONNECT_DELAY = 30_000;
 
 // ============================================================================
 // Storage setup (ApiStorageBackend replaces IndexedDB)
@@ -182,7 +185,11 @@ function getWsUrl(): string {
 	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 	const host = window.location.host;
 	const token = authClient.token;
-	return `${protocol}//${host}/ws?token=${encodeURIComponent(token || "")}`;
+	let url = `${protocol}//${host}/ws?token=${encodeURIComponent(token || "")}`;
+	if (currentSessionId) {
+		url += `&sessionId=${encodeURIComponent(currentSessionId)}`;
+	}
+	return url;
 }
 
 function connectWebSocket(): void {
@@ -195,6 +202,7 @@ function connectWebSocket(): void {
 	ws.addEventListener("open", async () => {
 		console.log("[ws] Connected to bridge server");
 		wsConnected = true;
+		reconnectDelay = 1000; // Reset backoff on successful connection
 
 		// Create RemoteAgent with the WebSocket
 		remoteAgent = new RemoteAgent(ws!);
@@ -261,13 +269,15 @@ function connectWebSocket(): void {
 		}
 		renderApp();
 
-		// Auto-reconnect after 3 seconds (only if still authenticated)
+		// Auto-reconnect with exponential backoff (only if still authenticated)
 		if (authClient.isAuthenticated) {
 			clearTimeout(reconnectTimer);
+			console.log(`[ws] Reconnecting in ${reconnectDelay / 1000}s...`);
 			reconnectTimer = setTimeout(() => {
 				console.log("[ws] Attempting reconnect...");
 				connectWebSocket();
-			}, 3000);
+			}, reconnectDelay);
+			reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
 		}
 	});
 
@@ -369,6 +379,33 @@ const renderApp = () => {
 						},
 						title: "New Session",
 					})}
+
+					<!-- Provider Keys (admin only) -->
+					${user?.role === "admin"
+						? Button({
+								variant: "ghost",
+								size: "sm",
+								children: icon(KeyRound, "sm"),
+								onClick: () => {
+									const dialog = document.createElement("dialog");
+									dialog.innerHTML = `
+										<div style="min-width: 500px; max-width: 600px; padding: 1rem;">
+											<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+												<h2 style="margin: 0; font-size: 1.125rem;">Provider Keys</h2>
+												<button onclick="this.closest('dialog').close()" style="background: none; border: none; cursor: pointer; font-size: 1.25rem;">&times;</button>
+											</div>
+											<provider-keys-panel></provider-keys-panel>
+										</div>
+									`;
+									const panel = dialog.querySelector("provider-keys-panel") as any;
+									if (panel) panel.getToken = () => authClient.token;
+									document.body.appendChild(dialog);
+									dialog.showModal();
+									dialog.addEventListener("close", () => dialog.remove());
+								},
+								title: "Provider Keys",
+							})
+						: null}
 
 					<theme-toggle></theme-toggle>
 

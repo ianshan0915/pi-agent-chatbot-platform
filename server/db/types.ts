@@ -58,3 +58,15 @@ export interface MessageRow {
 	usage: any | null;
 	created_at: Date;
 }
+
+export interface ProviderKeyRow {
+	id: string;
+	team_id: string;
+	provider: string;
+	encrypted_dek: Buffer;
+	encrypted_key: Buffer;
+	iv: Buffer;
+	key_version: number;
+	created_at: Date;
+	updated_at: Date;
+}
