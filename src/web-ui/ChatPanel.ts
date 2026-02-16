@@ -23,6 +23,18 @@ export class ChatPanel extends LitElement {
 	@state() private artifactCount = 0;
 	@state() private showArtifactsPanel = false;
 	@state() private windowWidth = 0;
+	private _skills: Array<{ name: string; description: string }> = [];
+
+	get skills() {
+		return this._skills;
+	}
+
+	set skills(value: Array<{ name: string; description: string }>) {
+		this._skills = value;
+		if (this.agentInterface) {
+			this.agentInterface.skills = value;
+		}
+	}
 
 	private resizeHandler = () => {
 		this.windowWidth = window.innerWidth;
@@ -80,6 +92,7 @@ export class ChatPanel extends LitElement {
 		this.agentInterface.onApiKeyRequired = config?.onApiKeyRequired;
 		this.agentInterface.onBeforeSend = config?.onBeforeSend;
 		this.agentInterface.onCostClick = config?.onCostClick;
+		this.agentInterface.skills = this._skills;
 
 		// Set up artifacts panel
 		this.artifactsPanel = new ArtifactsPanel();

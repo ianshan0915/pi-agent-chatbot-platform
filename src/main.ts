@@ -50,6 +50,7 @@ let wsConnected = false;
 let currentSessionId: string | undefined;
 let currentTitle = "";
 let ws: WebSocket | null = null;
+let skillsList: Array<{ name: string; description: string }> = [];
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let reconnectDelay = 1000; // Exponential backoff: 1s → 2s → 4s → ... → 30s max
 const MAX_RECONNECT_DELAY = 30_000;
@@ -302,6 +303,29 @@ function disconnectWebSocket(): void {
 }
 
 // ============================================================================
+// Skills fetching
+// ============================================================================
+
+async function fetchSkills(): Promise<void> {
+	try {
+		const res = await fetch("/api/skills", {
+			headers: { Authorization: `Bearer ${authClient.token}` },
+		});
+		if (!res.ok) return;
+		const data = await res.json();
+		const skills = data?.data?.skills;
+		if (data.success && Array.isArray(skills)) {
+			skillsList = skills.map((s: any) => ({ name: s.name, description: s.description || "" }));
+			if (chatPanel) {
+				chatPanel.skills = skillsList;
+			}
+		}
+	} catch (err) {
+		console.error("Failed to fetch skills:", err);
+	}
+}
+
+// ============================================================================
 // Render
 // ============================================================================
 
@@ -512,6 +536,7 @@ function onAuthSuccess() {
 	storage = initStorage();
 	chatPanel = new ChatPanel();
 	connectWebSocket();
+	fetchSkills();
 	renderApp();
 }
 
@@ -539,6 +564,7 @@ async function initApp() {
 			storage = initStorage();
 			chatPanel = new ChatPanel();
 			connectWebSocket();
+			fetchSkills();
 		} else {
 			// Token expired/invalid — show login
 			authClient.logout();

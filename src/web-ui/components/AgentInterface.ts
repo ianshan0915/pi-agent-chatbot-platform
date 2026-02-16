@@ -2,7 +2,7 @@ import { streamSimple, type ToolResultMessage, type Usage } from "@mariozechner/
 import { html, LitElement } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import { ModelSelector } from "../dialogs/ModelSelector.js";
-import type { MessageEditor } from "./MessageEditor.js";
+import type { MessageEditor, SkillInfo } from "./MessageEditor.js";
 import "./MessageEditor.js";
 import "./MessageList.js";
 import "./Messages.js"; // Import for side effects to register the custom elements
@@ -32,6 +32,8 @@ export class AgentInterface extends LitElement {
 	@property({ attribute: false }) onBeforeToolCall?: (toolName: string, args: any) => boolean | Promise<boolean>;
 	// Optional callback called when cost display is clicked
 	@property({ attribute: false }) onCostClick?: () => void;
+	// Skills available for slash command autocomplete
+	@property({ attribute: false }) skills: SkillInfo[] = [];
 
 	// References
 	@query("message-editor") private _messageEditor!: MessageEditor;
@@ -359,6 +361,7 @@ export class AgentInterface extends LitElement {
 							.showAttachmentButton=${this.enableAttachments}
 							.showModelSelector=${this.enableModelSelector}
 							.showThinkingSelector=${this.enableThinkingSelector}
+							.skills=${this.skills}
 							.onSend=${(input: string, attachments: Attachment[]) => {
 								this.sendMessage(input, attachments);
 							}}
