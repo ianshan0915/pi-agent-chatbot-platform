@@ -65,9 +65,18 @@ export class UserMessage extends LitElement {
 			content = content.substring(0, docMarker).trim();
 		}
 
+		// Strip expanded <skill> tags — show just the actual question with a skill badge
+		let skillName = "";
+		const skillMatch = content.match(/^<skill\s+name="([^"]+)"[^>]*>[\s\S]*?<\/skill>\s*/);
+		if (skillMatch) {
+			skillName = skillMatch[1];
+			content = content.substring(skillMatch[0].length).trim();
+		}
+
 		return html`
 			<div class="flex justify-start mx-4">
 				<div class="user-message-container py-2 px-4 rounded-xl">
+					${skillName ? html`<div class="text-xs text-muted-foreground mb-1">Using skill: <span class="font-medium">${skillName}</span></div>` : ""}
 					<markdown-block .content=${content}></markdown-block>
 					${
 						this.message.role === "user-with-attachments" &&
