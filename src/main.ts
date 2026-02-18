@@ -17,19 +17,34 @@ import {
 	ProviderKeysStore,
 	ProvidersModelsTab,
 	ProxyTab,
-	SessionListDialog,
 	SessionsStore,
 	SettingsDialog,
 	SettingsStore,
 	setAppStorage,
 } from "./web-ui/index.js";
+import type { SessionMetadata } from "./web-ui/index.js";
 import "./components/ProviderKeysPanel.js";
 import "./components/SkillsPanel.js";
 import "./components/FilesPanel.js";
 import "./components/OAuthConnectionsPanel.js";
 import "./components/SchedulerPanel.js";
-import { html, render } from "lit";
-import { Calendar, FileUp, History, KeyRound, Link, LogOut, Puzzle, RotateCcw, Settings, Wifi, WifiOff } from "lucide";
+import { html, render, nothing } from "lit";
+import {
+	Calendar,
+	ChevronDown,
+	FileUp,
+	KeyRound,
+	Link,
+	LogOut,
+	MessageSquare,
+	PanelLeft,
+	PanelLeftClose,
+	Plus,
+	Puzzle,
+	Settings,
+	Trash2,
+	Wrench,
+} from "lucide";
 import { AuthClient } from "./auth/auth-client.js";
 import "./auth/login-page.js";
 import { RemoteAgent } from "./remote-agent.js";
@@ -57,6 +72,35 @@ let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let reconnectDelay = 1000; // Exponential backoff: 1s → 2s → 4s → ... → 30s max
 const MAX_RECONNECT_DELAY = 30_000;
 let saveSessionTimer: ReturnType<typeof setTimeout> | undefined;
+
+// Cache tool call arguments for detecting renderable file writes
+const pendingToolArgs = new Map<string, { toolName: string; args: any }>();
+// Track the last known working directory from tool arg file paths
+let lastKnownDir = "";
+// Track files we've already attempted to fetch (avoid duplicate fetches)
+const fetchedFileRefs = new Set<string>();
+
+// All file extensions the artifacts panel can render
+const RENDERABLE_EXTENSIONS = new Set([
+	"html", "htm", "svg", "md", "markdown",
+	"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico",
+	"pdf", "xlsx", "xls", "docx", "pptx", "ppt",
+	"txt", "json", "xml", "yaml", "yml", "csv",
+	"js", "ts", "jsx", "tsx", "py", "java", "c", "cpp", "h",
+	"css", "scss", "sass", "less", "sh",
+]);
+
+// Binary file extensions that need base64 encoding
+const BINARY_EXTENSIONS = new Set([
+	"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico",
+	"pdf", "xlsx", "xls", "docx", "pptx", "ppt",
+]);
+
+// Sidebar & dropdown state
+let sidebarOpen = true;
+let sidebarSessions: SessionMetadata[] = [];
+let toolsMenuOpen = false;
+let userMenuOpen = false;
 
 // ============================================================================
 // Storage setup (ApiStorageBackend replaces IndexedDB)
@@ -154,6 +198,8 @@ const saveSession = async () => {
 		};
 
 		await storage.sessions.save(sessionData, metadata);
+		// Refresh sidebar after saving
+		loadSidebarSessions();
 	} catch (err) {
 		console.error("Failed to save session:", err);
 	}
@@ -182,11 +228,126 @@ const loadSession = async (sessionId: string): Promise<boolean> => {
 		if (chatPanel?.agentInterface) {
 			chatPanel.agentInterface.requestUpdate();
 		}
+
+		// Clear previous session's artifacts, then reconstruct from loaded messages
+		chatPanel?.artifactsPanel?.clear();
+		fetchedFileRefs.clear();
+		reconstructFileArtifactsFromMessages(sessionData.messages);
 	}
 
 	renderApp();
 	return true;
 };
+
+const deleteSession = async (sessionId: string) => {
+	if (!storage) return;
+	try {
+		await storage.sessions.delete(sessionId);
+		if (sessionId === currentSessionId) {
+			currentSessionId = undefined;
+			currentTitle = "";
+			chatPanel?.artifactsPanel?.clear();
+			fetchedFileRefs.clear();
+			if (remoteAgent) {
+				remoteAgent.newSession();
+			}
+		}
+		await loadSidebarSessions();
+		renderApp();
+	} catch (err) {
+		console.error("Failed to delete session:", err);
+	}
+};
+
+// ============================================================================
+// Sidebar helpers
+// ============================================================================
+
+async function loadSidebarSessions() {
+	if (!storage) return;
+	try {
+		sidebarSessions = await storage.sessions.getAllMetadata();
+		renderApp();
+	} catch (err) {
+		console.error("Failed to load sidebar sessions:", err);
+	}
+}
+
+interface SessionGroup {
+	label: string;
+	sessions: SessionMetadata[];
+}
+
+function groupSessionsByDate(sessions: SessionMetadata[]): SessionGroup[] {
+	const now = new Date();
+	const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+	const yesterdayStart = new Date(todayStart.getTime() - 86400000);
+	const last7Start = new Date(todayStart.getTime() - 7 * 86400000);
+
+	const today: SessionMetadata[] = [];
+	const yesterday: SessionMetadata[] = [];
+	const last7Days: SessionMetadata[] = [];
+	const older: SessionMetadata[] = [];
+
+	for (const s of sessions) {
+		const d = new Date(s.lastModified || s.createdAt);
+		if (d >= todayStart) today.push(s);
+		else if (d >= yesterdayStart) yesterday.push(s);
+		else if (d >= last7Start) last7Days.push(s);
+		else older.push(s);
+	}
+
+	const groups: SessionGroup[] = [];
+	if (today.length) groups.push({ label: "Today", sessions: today });
+	if (yesterday.length) groups.push({ label: "Yesterday", sessions: yesterday });
+	if (last7Days.length) groups.push({ label: "Last 7 days", sessions: last7Days });
+	if (older.length) groups.push({ label: "Older", sessions: older });
+	return groups;
+}
+
+// ============================================================================
+// Dialog opener helper
+// ============================================================================
+
+function openDialog(opts: { title: string; tag: string; style?: string; setup?: (panel: any) => void }) {
+	const dialog = document.createElement("dialog");
+	dialog.style.cssText = opts.style || "";
+	dialog.innerHTML = `
+		<div style="min-width: 500px; max-width: 600px; padding: 1rem;">
+			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+				<h2 style="margin: 0; font-size: 1.125rem;">${opts.title}</h2>
+				<button onclick="this.closest('dialog').close()" style="background: none; border: none; cursor: pointer; font-size: 1.25rem;">&times;</button>
+			</div>
+			<${opts.tag}></${opts.tag}>
+		</div>
+	`;
+	const panel = dialog.querySelector(opts.tag) as any;
+	if (panel && opts.setup) opts.setup(panel);
+	document.body.appendChild(dialog);
+	dialog.showModal();
+	dialog.addEventListener("close", () => dialog.remove());
+	dialog.addEventListener("click", (e) => {
+		if (e.target === dialog) dialog.close();
+	});
+}
+
+// ============================================================================
+// Click-outside handler for dropdowns
+// ============================================================================
+
+function setupClickOutside() {
+	document.addEventListener("click", (e) => {
+		const target = e.target as HTMLElement;
+		if (toolsMenuOpen && !target.closest("[data-tools-menu]")) {
+			toolsMenuOpen = false;
+			renderApp();
+		}
+		if (userMenuOpen && !target.closest("[data-user-menu]")) {
+			userMenuOpen = false;
+			renderApp();
+		}
+	});
+}
 
 // ============================================================================
 // WebSocket connection
@@ -245,7 +406,7 @@ function connectWebSocket(): void {
 		}
 
 		// Subscribe to events for UI updates + auto-save
-		agentUnsubscribe = remoteAgent.subscribe((_event: AgentEvent) => {
+		agentUnsubscribe = remoteAgent.subscribe((event: AgentEvent) => {
 			const messages = remoteAgent!.state.messages;
 
 			// Generate title after first successful response
@@ -265,6 +426,51 @@ function connectWebSocket(): void {
 				saveSessionTimer = setTimeout(() => {
 					saveSession();
 				}, 500);
+			}
+
+			// --- File artifact auto-detection ---
+			// Cache tool call args on start + track directory
+			if (event.type === "tool_execution_start") {
+				pendingToolArgs.set(event.toolCallId, { toolName: event.toolName, args: event.args });
+				// Track working directory from any absolute file path in args
+				const args = event.args;
+				if (args && typeof args === "object") {
+					const fp = args.path || args.filePath || args.file_path || "";
+					if (typeof fp === "string" && fp.startsWith("/")) {
+						const dir = fp.substring(0, fp.lastIndexOf("/"));
+						if (dir) lastKnownDir = dir;
+					}
+				}
+			}
+			// On tool execution end, check for renderable file writes
+			if (event.type === "tool_execution_end" && !event.isError) {
+				const cached = pendingToolArgs.get(event.toolCallId);
+				pendingToolArgs.delete(event.toolCallId);
+
+				if (cached?.args) {
+					const filePath = getRenderablePathFromArgs(cached.args);
+					const content = getContentFromArgs(cached.args);
+					if (filePath && content) {
+						createFileArtifact(filePath, content);
+					} else if (filePath && !content) {
+						// Content not in args — try fetching from server
+						fetchAndCreateFileArtifact(filePath);
+					}
+				}
+			}
+			// Clean up on error too
+			if (event.type === "tool_execution_end" && event.isError) {
+				pendingToolArgs.delete(event.toolCallId);
+			}
+			// On message_end, scan assistant message text for renderable file
+			// references not caught by tool-arg detection (e.g. files created
+			// by running a script). This is more reliable than scanning at
+			// agent_end because the message content is available in the event.
+			if (event.type === "message_end") {
+				const msg = (event as any).message;
+				if (msg?.role === "assistant") {
+					scanMessageForFileReferences(msg);
+				}
 			}
 
 			renderApp();
@@ -346,6 +552,135 @@ async function fetchSkills(): Promise<void> {
 }
 
 // ============================================================================
+// File artifact detection helpers
+// ============================================================================
+
+/** Extract renderable file path from tool args (supports various arg shapes) */
+function getRenderablePathFromArgs(args: any): string | null {
+	if (!args || typeof args !== "object") return null;
+	const filePath = args.path || args.filePath || args.file_path || args.filename || "";
+	if (typeof filePath !== "string" || filePath.length === 0) return null;
+	const ext = filePath.split(".").pop()?.toLowerCase();
+	if (ext && RENDERABLE_EXTENSIONS.has(ext)) {
+		return filePath;
+	}
+	return null;
+}
+
+/** Extract content from tool args */
+function getContentFromArgs(args: any): string | null {
+	if (!args || typeof args !== "object") return null;
+	const content = args.content || args.data || args.text || "";
+	return typeof content === "string" && content.length > 0 ? content : null;
+}
+
+/** Create or update an artifact in the panel from a file write */
+async function createFileArtifact(filePath: string, content: string) {
+	const panel = chatPanel?.artifactsPanel;
+	if (!panel) return;
+	const filename = filePath.split("/").pop() || filePath;
+	const command = panel.artifacts.has(filename) ? "rewrite" : "create";
+	await panel.executeCommand({ command, filename, content });
+}
+
+/** Fetch file from server (fallback when content not in args) */
+async function fetchAndCreateFileArtifact(filePath: string) {
+	try {
+		const res = await fetch(`/api/agent-files?path=${encodeURIComponent(filePath)}`, {
+			headers: { Authorization: `Bearer ${authClient.token}` },
+		});
+		if (!res.ok) return;
+		const data = await res.json();
+		if (data.content) await createFileArtifact(filePath, data.content);
+	} catch (err) {
+		console.error("[artifacts] Failed to fetch file:", err);
+	}
+}
+
+/** Scan messages for renderable file writes and reconstruct artifacts */
+async function reconstructFileArtifactsFromMessages(messages: AgentMessage[]) {
+	const panel = chatPanel?.artifactsPanel;
+	if (!panel) return;
+
+	// Pass 1: Collect artifacts from tool call args (file-write tools with content)
+	for (const msg of messages) {
+		if (msg.role !== "assistant") continue;
+		for (const block of msg.content) {
+			if (block.type !== "toolCall") continue;
+			const args = (block as any).arguments;
+			const filePath = getRenderablePathFromArgs(args);
+			const content = getContentFromArgs(args);
+			if (filePath && content) {
+				await createFileArtifact(filePath, content);
+				// Track directory for relative path resolution
+				if (typeof filePath === "string" && filePath.startsWith("/")) {
+					const dir = filePath.substring(0, filePath.lastIndexOf("/"));
+					if (dir) lastKnownDir = dir;
+				}
+			}
+		}
+	}
+
+	// Pass 2: Scan assistant message text for file references not caught above
+	// (e.g. files created by running scripts)
+	for (const msg of messages) {
+		if (msg.role !== "assistant") continue;
+		scanMessageForFileReferences(msg);
+	}
+}
+
+/**
+ * Regex to find filenames with renderable extensions in message text.
+ * Handles markdown formatting: backticks, bold, links, etc.
+ * Examples matched:
+ *   "Your file: layman_talk.pptx (131 KB)"
+ *   "`report.xlsx`"
+ *   "**output.pdf**"
+ *   "[download](chart.svg)"
+ *   "/path/to/file.html"
+ */
+const RENDERABLE_FILE_REGEX = new RegExp(
+	`(?:^|[\\s\\(\\/:"'\\[\\x60*])` + // leading: start, whitespace, or markdown chars (backtick, *, [, etc.)
+		`([\\w][\\w.\\-]*\\.(${[...RENDERABLE_EXTENSIONS].join("|")}))` + // capture: filename.ext
+		`(?=[\\s\\),:;'"\\]!?\\x60*]|$)`, // trailing: whitespace, punctuation, or markdown chars
+	"gi",
+);
+
+/**
+ * Scan a single assistant message for renderable file names not already
+ * in the artifacts panel. This catches files generated by scripts
+ * (e.g. a .js helper that writes a .pptx to disk).
+ */
+function scanMessageForFileReferences(msg: AgentMessage) {
+	const panel = chatPanel?.artifactsPanel;
+	if (!panel || !msg.content || typeof msg.content === "string") return;
+
+	const detectedFiles = new Set<string>();
+
+	for (const block of msg.content) {
+		if ((block as any).type !== "text") continue;
+		const text = (block as any).text as string;
+		RENDERABLE_FILE_REGEX.lastIndex = 0;
+		let match: RegExpExecArray | null;
+		while ((match = RENDERABLE_FILE_REGEX.exec(text)) !== null) {
+			const filename = match[1];
+			// Skip files already in the artifacts panel or already fetched
+			if (!panel.artifacts.has(filename) && !fetchedFileRefs.has(filename)) {
+				detectedFiles.add(filename);
+			}
+		}
+	}
+
+	// Try to fetch each detected file from the server
+	for (const filename of detectedFiles) {
+		fetchedFileRefs.add(filename);
+		// Use absolute path if we tracked a directory, otherwise send relative
+		const fetchPath = lastKnownDir ? `${lastKnownDir}/${filename}` : filename;
+		fetchAndCreateFileArtifact(fetchPath);
+	}
+}
+
+// ============================================================================
 // Render
 // ============================================================================
 
@@ -364,244 +699,242 @@ const renderApp = () => {
 
 	// Authenticated — show main app
 	const user = authClient.user;
+	const sessionGroups = groupSessionsByDate(sidebarSessions);
+
 	const appHtml = html`
-		<div class="w-full h-screen flex flex-col bg-background text-foreground overflow-hidden">
-			<!-- Header -->
-			<div class="flex items-center justify-between border-b border-border shrink-0">
-				<div class="flex items-center gap-2 px-4 py-2">
-					<span class="text-base font-semibold text-foreground">Chatbot Platform</span>
-				</div>
-				<div class="flex items-center gap-1 px-2">
-					<!-- Connection status -->
-					<div class="flex items-center gap-1 text-xs px-2 ${wsConnected ? "text-green-500" : "text-red-500"}">
-						${
-							wsConnected
-								? html`${icon(Wifi, "sm")} <span>Connected</span>`
-								: html`${icon(WifiOff, "sm")} <span>Disconnected</span>`
-						}
+		<div class="w-full h-screen flex flex-row bg-background text-foreground overflow-hidden">
+			<!-- Sidebar -->
+			<aside class="shrink-0 flex flex-col border-r border-border bg-muted/30 overflow-hidden transition-all duration-200 ${sidebarOpen ? "w-64" : "w-0"}">
+				${sidebarOpen ? html`
+					<!-- Sidebar header -->
+					<div class="flex items-center justify-between px-3 py-3 border-b border-border">
+						<span class="text-sm font-semibold text-foreground truncate">Chatbot Platform</span>
+						${Button({
+							variant: "ghost",
+							size: "sm",
+							children: icon(PanelLeftClose, "sm"),
+							onClick: () => { sidebarOpen = false; renderApp(); },
+							title: "Collapse sidebar",
+						})}
 					</div>
 
-					<!-- User info -->
-					<span class="text-xs text-muted-foreground px-2">${user?.email || ""}</span>
+					<!-- New session button -->
+					<div class="px-3 py-2">
+						<button
+							class="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border border-border hover:bg-muted transition-colors cursor-pointer"
+							@click=${async () => {
+								if (remoteAgent) {
+									currentSessionId = undefined;
+									currentTitle = "";
+									chatPanel?.artifactsPanel?.clear();
+									fetchedFileRefs.clear();
+									await remoteAgent.newSession();
+									renderApp();
+								}
+							}}
+						>
+							${icon(Plus, "sm")}
+							<span>New chat</span>
+						</button>
+					</div>
 
-					<!-- Session history -->
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(History, "sm"),
-						onClick: () => {
-							SessionListDialog.open(
-								async (sessionId) => {
-									await loadSession(sessionId);
-								},
-								(deletedSessionId) => {
-									if (deletedSessionId === currentSessionId) {
-										currentSessionId = undefined;
-										currentTitle = "";
-										if (remoteAgent) {
-											remoteAgent.newSession();
-											renderApp();
-										}
-									}
-								},
-							);
-						},
-						title: "Sessions",
-					})}
+					<!-- Session list -->
+					<div class="flex-1 overflow-y-auto px-2 py-1">
+						${sessionGroups.length === 0 ? html`
+							<div class="text-xs text-muted-foreground px-2 py-4 text-center">No sessions yet</div>
+						` : sessionGroups.map((group) => html`
+							<div class="mb-2">
+								<div class="text-xs font-medium text-muted-foreground px-2 py-1">${group.label}</div>
+								${group.sessions.map((session) => html`
+									<div
+										class="group flex items-center gap-1 px-2 py-1.5 rounded-md text-sm cursor-pointer transition-colors ${session.id === currentSessionId ? "bg-muted font-medium" : "hover:bg-muted/60"}"
+										@click=${() => loadSession(session.id)}
+									>
+										${icon(MessageSquare, "sm")}
+										<span class="flex-1 truncate">${session.title || "Untitled"}</span>
+										<button
+											class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-destructive/10 hover:text-destructive transition-opacity cursor-pointer"
+											title="Delete session"
+											@click=${(e: Event) => { e.stopPropagation(); deleteSession(session.id); }}
+										>
+											${icon(Trash2, "sm")}
+										</button>
+									</div>
+								`)}
+							</div>
+						`)}
+					</div>
 
-					<!-- New session -->
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(RotateCcw, "sm"),
-						onClick: async () => {
-							if (remoteAgent) {
-								currentSessionId = undefined;
-								currentTitle = "";
-								await remoteAgent.newSession();
-								renderApp();
-							}
-						},
-						title: "New Session",
-					})}
+					<!-- Sidebar footer -->
+					<div class="border-t border-border px-3 py-2 flex items-center gap-2">
+						<span class="w-2 h-2 rounded-full shrink-0 ${wsConnected ? "bg-green-500" : "bg-red-500"}"></span>
+						<span class="text-xs text-muted-foreground truncate flex-1">${user?.email || ""}</span>
+					</div>
+				` : nothing}
+			</aside>
 
-					<!-- Provider Keys (admin only) -->
-					${user?.role === "admin"
-						? Button({
+			<!-- Main content -->
+			<div class="flex-1 flex flex-col min-w-0">
+				<!-- Header -->
+				<div class="flex items-center justify-between border-b border-border shrink-0 px-3 py-1.5">
+					<!-- Left: sidebar toggle + session title -->
+					<div class="flex items-center gap-2 min-w-0">
+						${!sidebarOpen ? Button({
+							variant: "ghost",
+							size: "sm",
+							children: icon(PanelLeft, "sm"),
+							onClick: () => { sidebarOpen = true; renderApp(); },
+							title: "Open sidebar",
+						}) : nothing}
+						<span class="text-sm font-medium text-foreground truncate">${currentTitle || "New chat"}</span>
+					</div>
+
+					<!-- Right: tools dropdown, theme toggle, user menu -->
+					<div class="flex items-center gap-1">
+						<!-- Tools dropdown -->
+						<div class="relative" data-tools-menu>
+							${Button({
 								variant: "ghost",
 								size: "sm",
-								children: icon(KeyRound, "sm"),
-								onClick: () => {
-									const dialog = document.createElement("dialog");
-									dialog.innerHTML = `
-										<div style="min-width: 500px; max-width: 600px; padding: 1rem;">
-											<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-												<h2 style="margin: 0; font-size: 1.125rem;">Provider Keys</h2>
-												<button onclick="this.closest('dialog').close()" style="background: none; border: none; cursor: pointer; font-size: 1.25rem;">&times;</button>
-											</div>
-											<provider-keys-panel></provider-keys-panel>
-										</div>
-									`;
-									const panel = dialog.querySelector("provider-keys-panel") as any;
-									if (panel) panel.getToken = () => authClient.token;
-									document.body.appendChild(dialog);
-									dialog.showModal();
-									dialog.addEventListener("close", () => dialog.remove());
-									dialog.addEventListener("click", (e) => {
-										if (e.target === dialog) dialog.close();
-									});
+								children: html`<span class="flex items-center gap-1">${icon(Wrench, "sm")}${icon(ChevronDown, "sm")}</span>`,
+								onClick: (e: Event) => {
+									e.stopPropagation();
+									toolsMenuOpen = !toolsMenuOpen;
+									userMenuOpen = false;
+									renderApp();
 								},
-								title: "Provider Keys",
-							})
-						: null}
-
-					<!-- OAuth Subscriptions -->
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(Link, "sm"),
-						onClick: () => {
-							const dialog = document.createElement("dialog");
-							dialog.innerHTML = `
-								<div style="min-width: 500px; max-width: 600px; padding: 1rem;">
-									<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-										<h2 style="margin: 0; font-size: 1.125rem;">OAuth Subscriptions</h2>
-										<button onclick="this.closest('dialog').close()" style="background: none; border: none; cursor: pointer; font-size: 1.25rem;">&times;</button>
-									</div>
-									<oauth-connections-panel></oauth-connections-panel>
+								title: "Tools",
+							})}
+							${toolsMenuOpen ? html`
+								<div class="absolute right-0 top-full mt-1 w-52 bg-background border border-border rounded-md shadow-lg py-1 z-50">
+									<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer" @click=${() => {
+										toolsMenuOpen = false;
+										openDialog({
+											title: "Skills",
+											tag: "skills-panel",
+											setup: (panel) => { panel.getToken = () => authClient.token; panel.userRole = user?.role || "member"; },
+										});
+										renderApp();
+									}}>
+										${icon(Puzzle, "sm")}
+										<span>Skills</span>
+									</button>
+									<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer" @click=${() => {
+										toolsMenuOpen = false;
+										openDialog({
+											title: "Files",
+											tag: "files-panel",
+											setup: (panel) => { panel.getToken = () => authClient.token; },
+										});
+										renderApp();
+									}}>
+										${icon(FileUp, "sm")}
+										<span>Files</span>
+									</button>
+									<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer" @click=${() => {
+										toolsMenuOpen = false;
+										openDialog({
+											title: "OAuth Subscriptions",
+											tag: "oauth-connections-panel",
+											setup: (panel) => { panel.getToken = () => authClient.token; },
+										});
+										renderApp();
+									}}>
+										${icon(Link, "sm")}
+										<span>OAuth Subscriptions</span>
+									</button>
+									${user?.role === "admin" ? html`
+										<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer" @click=${() => {
+											toolsMenuOpen = false;
+											openDialog({
+												title: "Provider Keys",
+												tag: "provider-keys-panel",
+												setup: (panel) => { panel.getToken = () => authClient.token; },
+											});
+											renderApp();
+										}}>
+											${icon(KeyRound, "sm")}
+											<span>Provider Keys</span>
+										</button>
+									` : nothing}
+									<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer" @click=${() => {
+										toolsMenuOpen = false;
+										const dialog = document.createElement("dialog");
+										dialog.style.cssText = "max-width: 900px; width: 90vw; padding: 1.5rem; border: 1px solid var(--border); border-radius: 0.5rem; background: var(--background);";
+										dialog.innerHTML = `
+											<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+												<h2 style="margin: 0; font-size: 1.25rem; font-weight: 600;">Scheduled Jobs</h2>
+												<button style="border: none; background: transparent; font-size: 1.5rem; cursor: pointer; padding: 0.25rem;" onclick="this.closest('dialog').close()">&times;</button>
+											</div>
+											<scheduler-panel></scheduler-panel>
+										`;
+										const panel = dialog.querySelector("scheduler-panel") as any;
+										if (panel) {
+											panel.getToken = () => authClient.token;
+											panel.userRole = user?.role || "member";
+										}
+										document.body.appendChild(dialog);
+										dialog.showModal();
+										dialog.addEventListener("close", () => dialog.remove());
+										dialog.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); });
+										renderApp();
+									}}>
+										${icon(Calendar, "sm")}
+										<span>Scheduled Jobs</span>
+									</button>
 								</div>
-							`;
-							const panel = dialog.querySelector("oauth-connections-panel") as any;
-							if (panel) panel.getToken = () => authClient.token;
-							document.body.appendChild(dialog);
-							dialog.showModal();
-							dialog.addEventListener("close", () => dialog.remove());
-							dialog.addEventListener("click", (e) => {
-								if (e.target === dialog) dialog.close();
-							});
-						},
-						title: "OAuth Subscriptions",
-					})}
+							` : nothing}
+						</div>
 
-					<!-- Skills -->
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(Puzzle, "sm"),
-						onClick: () => {
-							const dialog = document.createElement("dialog");
-							dialog.innerHTML = `
-								<div style="min-width: 500px; max-width: 600px; padding: 1rem;">
-									<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-										<h2 style="margin: 0; font-size: 1.125rem;">Skills</h2>
-										<button onclick="this.closest('dialog').close()" style="background: none; border: none; cursor: pointer; font-size: 1.25rem;">&times;</button>
-									</div>
-									<skills-panel></skills-panel>
+						<theme-toggle></theme-toggle>
+
+						<!-- User menu dropdown -->
+						<div class="relative" data-user-menu>
+							${Button({
+								variant: "ghost",
+								size: "sm",
+								children: html`<span class="flex items-center gap-1">${icon(Settings, "sm")}${icon(ChevronDown, "sm")}</span>`,
+								onClick: (e: Event) => {
+									e.stopPropagation();
+									userMenuOpen = !userMenuOpen;
+									toolsMenuOpen = false;
+									renderApp();
+								},
+								title: "User menu",
+							})}
+							${userMenuOpen ? html`
+								<div class="absolute right-0 top-full mt-1 w-48 bg-background border border-border rounded-md shadow-lg py-1 z-50">
+									<div class="px-3 py-2 text-xs text-muted-foreground border-b border-border">${user?.email || ""}</div>
+									<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer" @click=${() => {
+										userMenuOpen = false;
+										SettingsDialog.open([new ProvidersModelsTab(), new ProxyTab()]);
+										renderApp();
+									}}>
+										${icon(Settings, "sm")}
+										<span>Settings</span>
+									</button>
+									<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left text-destructive cursor-pointer" @click=${() => {
+										userMenuOpen = false;
+										handleLogout();
+									}}>
+										${icon(LogOut, "sm")}
+										<span>Logout</span>
+									</button>
 								</div>
-							`;
-							const panel = dialog.querySelector("skills-panel") as any;
-							if (panel) {
-								panel.getToken = () => authClient.token;
-								panel.userRole = user?.role || "member";
-							}
-							document.body.appendChild(dialog);
-							dialog.showModal();
-							dialog.addEventListener("close", () => dialog.remove());
-							dialog.addEventListener("click", (e) => {
-								if (e.target === dialog) dialog.close();
-							});
-						},
-						title: "Skills",
-					})}
-
-					<!-- Files -->
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(FileUp, "sm"),
-						onClick: () => {
-							const dialog = document.createElement("dialog");
-							dialog.innerHTML = `
-								<div style="min-width: 500px; max-width: 600px; padding: 1rem;">
-									<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-										<h2 style="margin: 0; font-size: 1.125rem;">Files</h2>
-										<button onclick="this.closest('dialog').close()" style="background: none; border: none; cursor: pointer; font-size: 1.25rem;">&times;</button>
-									</div>
-									<files-panel></files-panel>
-								</div>
-							`;
-							const panel = dialog.querySelector("files-panel") as any;
-							if (panel) panel.getToken = () => authClient.token;
-							document.body.appendChild(dialog);
-							dialog.showModal();
-							dialog.addEventListener("close", () => dialog.remove());
-							dialog.addEventListener("click", (e) => {
-								if (e.target === dialog) dialog.close();
-							});
-						},
-						title: "Files",
-					})}
-
-					<!-- Scheduled Jobs -->
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(Calendar, "sm"),
-						onClick: () => {
-							const dialog = document.createElement("dialog");
-							dialog.style.cssText = "max-width: 900px; width: 90vw; padding: 1.5rem; border: 1px solid var(--border); border-radius: 0.5rem; background: var(--background);";
-							dialog.innerHTML = `
-								<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-									<h2 style="margin: 0; font-size: 1.25rem; font-weight: 600;">Scheduled Jobs</h2>
-									<button style="border: none; background: transparent; font-size: 1.5rem; cursor: pointer; padding: 0.25rem;" onclick="this.closest('dialog').close()">&times;</button>
-								</div>
-								<scheduler-panel></scheduler-panel>
-							`;
-							const panel = dialog.querySelector("scheduler-panel") as any;
-							if (panel) {
-								panel.getToken = () => authClient.token;
-								panel.userRole = user?.role || "member";
-							}
-							document.body.appendChild(dialog);
-							dialog.showModal();
-							dialog.addEventListener("close", () => dialog.remove());
-							dialog.addEventListener("click", (e) => {
-								if (e.target === dialog) dialog.close();
-							});
-						},
-						title: "Scheduled Jobs",
-					})}
-
-					<theme-toggle></theme-toggle>
-
-					<!-- Settings (providers, proxy) -->
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(Settings, "sm"),
-						onClick: () => SettingsDialog.open([new ProvidersModelsTab(), new ProxyTab()]),
-						title: "Settings",
-					})}
-
-					<!-- Logout -->
-					${Button({
-						variant: "ghost",
-						size: "sm",
-						children: icon(LogOut, "sm"),
-						onClick: handleLogout,
-						title: "Logout",
-					})}
+							` : nothing}
+						</div>
+					</div>
 				</div>
-			</div>
 
-			<!-- Chat Panel -->
-			${
-				!wsConnected
-					? html`<div class="flex-1 flex items-center justify-center">
-						<div class="text-muted-foreground text-sm">Connecting...</div>
-					</div>`
-					: chatPanel
-			}
+				<!-- Chat Panel -->
+				${
+					!wsConnected
+						? html`<div class="flex-1 flex items-center justify-center">
+							<div class="text-muted-foreground text-sm">Connecting...</div>
+						</div>`
+						: chatPanel
+				}
+			</div>
 		</div>
 	`;
 
@@ -618,12 +951,14 @@ function onAuthSuccess() {
 	chatPanel = new ChatPanel();
 	connectWebSocket();
 	fetchSkills();
+	loadSidebarSessions();
 	renderApp();
 }
 
 function handleLogout() {
 	disconnectWebSocket();
 	storage = null;
+	sidebarSessions = [];
 	currentSessionId = undefined;
 	currentTitle = "";
 	authClient.logout();
@@ -638,6 +973,8 @@ async function initApp() {
 	const app = document.getElementById("app");
 	if (!app) throw new Error("App container not found");
 
+	setupClickOutside();
+
 	if (authClient.isAuthenticated) {
 		// Validate stored token
 		const valid = await authClient.validate();
@@ -646,6 +983,7 @@ async function initApp() {
 			chatPanel = new ChatPanel();
 			connectWebSocket();
 			fetchSkills();
+			loadSidebarSessions();
 		} else {
 			// Token expired/invalid — show login
 			authClient.logout();

@@ -27,6 +27,7 @@ import { HtmlArtifact } from "./HtmlArtifact.js";
 import { ImageArtifact } from "./ImageArtifact.js";
 import { MarkdownArtifact } from "./MarkdownArtifact.js";
 import { PdfArtifact } from "./PdfArtifact.js";
+import { PptxArtifact } from "./PptxArtifact.js";
 import { SvgArtifact } from "./SvgArtifact.js";
 import { TextArtifact } from "./TextArtifact.js";
 
@@ -131,7 +132,7 @@ export class ArtifactsPanel extends LitElement {
 	// Helper to determine file type from extension
 	private getFileType(
 		filename: string,
-	): "html" | "svg" | "markdown" | "image" | "pdf" | "excel" | "docx" | "text" | "generic" {
+	): "html" | "svg" | "markdown" | "image" | "pdf" | "excel" | "docx" | "pptx" | "text" | "generic" {
 		const ext = filename.split(".").pop()?.toLowerCase();
 		if (ext === "html") return "html";
 		if (ext === "svg") return "svg";
@@ -139,6 +140,7 @@ export class ArtifactsPanel extends LitElement {
 		if (ext === "pdf") return "pdf";
 		if (ext === "xlsx" || ext === "xls") return "excel";
 		if (ext === "docx") return "docx";
+		if (ext === "pptx" || ext === "ppt") return "pptx";
 		if (
 			ext === "png" ||
 			ext === "jpg" ||
@@ -201,6 +203,8 @@ export class ArtifactsPanel extends LitElement {
 				element = new ExcelArtifact();
 			} else if (type === "docx") {
 				element = new DocxArtifact();
+			} else if (type === "pptx") {
+				element = new PptxArtifact();
 			} else if (type === "text") {
 				element = new TextArtifact();
 			} else {
@@ -257,6 +261,19 @@ export class ArtifactsPanel extends LitElement {
 				activeButton.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
 			}
 		});
+	}
+
+	// Clear all artifacts (used when switching sessions)
+	public clear() {
+		this._artifacts.clear();
+		this.artifactElements.forEach((el) => {
+			el.remove();
+		});
+		this.artifactElements.clear();
+		this._activeFilename = null;
+		this._artifacts = new Map(this._artifacts);
+		this.onArtifactsChange?.();
+		this.requestUpdate();
 	}
 
 	// Open panel and focus an artifact tab by filename
@@ -412,7 +429,7 @@ export class ArtifactsPanel extends LitElement {
 	}
 
 	// Core command executor
-	private async executeCommand(
+	public async executeCommand(
 		params: ArtifactsParams,
 		options: { skipWait?: boolean; silent?: boolean } = {},
 	): Promise<string> {

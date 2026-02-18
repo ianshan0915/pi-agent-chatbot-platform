@@ -10,6 +10,7 @@ dotenv.config({ path: ".env.development" });
 dotenv.config(); // also load .env if it exists (overrides nothing by default)
 import express from "express";
 import { createServer } from "node:http";
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
@@ -56,6 +57,9 @@ async function main() {
 		res.json({ status: "ok", processPool: processPool.stats() });
 	});
 
+	// Track active CWDs per user (for agent-files endpoint)
+	const activeUserCwds = new Map<string, string>();
+
 	// --- API Routes ---
 	app.use("/api/auth", authRateLimit, authRouter);
 	app.use("/api/sessions", requireAuth, apiRateLimit, sessionsRouter);
@@ -66,6 +70,65 @@ async function main() {
 	app.use("/api/files", apiRateLimit, createFilesRouter(storageService));
 	app.use("/api/oauth", apiRateLimit, createOAuthRouter(crypto));
 	app.use("/api/jobs", apiRateLimit, createJobsRouter(storageService, crypto));
+
+	// All file extensions the artifacts panel can render
+	const RENDERABLE_EXTENSIONS = new Set([
+		"html", "htm", "svg", "md", "markdown",
+		"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico",
+		"pdf", "xlsx", "xls", "docx", "pptx", "ppt",
+		"txt", "json", "xml", "yaml", "yml", "csv",
+		"js", "ts", "jsx", "tsx", "py", "java", "c", "cpp", "h",
+		"css", "scss", "sass", "less", "sh",
+	]);
+	// Binary extensions that should be returned as base64
+	const BINARY_EXTENSIONS = new Set([
+		"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico",
+		"pdf", "xlsx", "xls", "docx", "pptx", "ppt",
+	]);
+
+	// Read files from the agent's working directory (for rendering artifacts)
+	app.get("/api/agent-files", requireAuth, apiRateLimit, async (req, res) => {
+		const rawPath = req.query.path as string;
+		if (!rawPath) {
+			return res.status(400).json({ error: "Path required" });
+		}
+		// Resolve relative paths against the user's active CWD
+		const userId = (req as any).user?.userId;
+		const cwd = activeUserCwds.get(userId);
+		let filePath: string;
+		if (path.isAbsolute(rawPath)) {
+			filePath = rawPath;
+		} else if (cwd) {
+			filePath = path.resolve(cwd, rawPath);
+		} else {
+			return res.status(400).json({ error: "Absolute path required (no active CWD)" });
+		}
+		// Only allow renderable file types
+		const ext = filePath.split(".").pop()?.toLowerCase() || "";
+		if (!RENDERABLE_EXTENSIONS.has(ext)) {
+			return res.status(400).json({ error: "Unsupported file type" });
+		}
+		// Validate path is under user's active CWD
+		if (cwd) {
+			const resolved = path.resolve(filePath);
+			if (!resolved.startsWith(cwd)) {
+				return res.status(403).json({ error: "Path is outside working directory" });
+			}
+		}
+		try {
+			const isBinary = BINARY_EXTENSIONS.has(ext);
+			if (isBinary) {
+				const buffer = await fs.readFile(filePath);
+				const base64Content = buffer.toString("base64");
+				res.json({ content: base64Content, encoding: "base64" });
+			} else {
+				const content = await fs.readFile(filePath, "utf-8");
+				res.json({ content, encoding: "text" });
+			}
+		} catch {
+			res.status(404).json({ error: "File not found" });
+		}
+	});
 
 	// --- WebSocket ---
 	const server = createServer(app);
@@ -84,6 +147,11 @@ async function main() {
 		if (url.searchParams.has("model")) options.model = url.searchParams.get("model")!;
 
 		const sessionId = url.searchParams.get("sessionId") || undefined;
+
+		// Track CWD for agent-files endpoint
+		if (options.cwd) {
+			activeUserCwds.set(user.userId, options.cwd);
+		}
 
 		// Use TenantBridge with server-side key management
 		const tenantOptions: TenantBridgeOptions = {
