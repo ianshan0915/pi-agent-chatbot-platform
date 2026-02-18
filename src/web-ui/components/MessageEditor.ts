@@ -5,7 +5,7 @@ import type { Model } from "@mariozechner/pi-ai";
 import { html, LitElement } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { createRef, ref } from "lit/directives/ref.js";
-import { Brain, Loader2, Paperclip, Send, Sparkles, Square } from "lucide";
+import { Brain, Eye, EyeOff, Loader2, Paperclip, Send, Sparkles, Square } from "lucide";
 import { type Attachment, loadAttachment } from "../utils/attachment-utils.js";
 import { i18n } from "../utils/i18n.js";
 import "./AttachmentTile.js";
@@ -45,6 +45,9 @@ export class MessageEditor extends LitElement {
 	@property() onModelSelect?: () => void;
 	@property() onThinkingChange?: (level: "off" | "minimal" | "low" | "medium" | "high") => void;
 	@property() onFilesChange?: (files: Attachment[]) => void;
+	@property({ type: Boolean }) showDetailToggle = true;
+	@property({ type: Boolean }) showDetails = false;
+	@property() onDetailsToggle?: (show: boolean) => void;
 	@property() attachments: Attachment[] = [];
 	@property() maxFiles = 10;
 	@property() maxFileSize = 20 * 1024 * 1024; // 20MB
@@ -457,6 +460,22 @@ export class MessageEditor extends LitElement {
 										size: "sm",
 										variant: "ghost",
 										fitContent: true,
+									})}
+								`
+								: ""
+						}
+						${
+							this.showDetailToggle
+								? html`
+									${Button({
+										variant: "ghost",
+										size: "icon",
+										className: "h-8 w-8",
+										onClick: () => {
+											this.onDetailsToggle?.(!this.showDetails);
+										},
+										children: this.showDetails ? icon(Eye, "sm") : icon(EyeOff, "sm"),
+										title: this.showDetails ? i18n("Hide details") : i18n("Show details"),
 									})}
 								`
 								: ""

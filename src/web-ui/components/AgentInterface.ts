@@ -1,6 +1,6 @@
 import { streamSimple, type ToolResultMessage, type Usage } from "@mariozechner/pi-ai";
 import { html, LitElement } from "lit";
-import { customElement, property, query } from "lit/decorators.js";
+import { customElement, property, query, state } from "lit/decorators.js";
 import { ModelSelector } from "../dialogs/ModelSelector.js";
 import type { MessageEditor, SkillInfo } from "./MessageEditor.js";
 import "./MessageEditor.js";
@@ -34,6 +34,8 @@ export class AgentInterface extends LitElement {
 	@property({ attribute: false }) onCostClick?: () => void;
 	// Skills available for slash command autocomplete
 	@property({ attribute: false }) skills: SkillInfo[] = [];
+
+	@state() private _showDetails = false;
 
 	// References
 	@query("message-editor") private _messageEditor!: MessageEditor;
@@ -81,6 +83,10 @@ export class AgentInterface extends LitElement {
 		this.style.flexDirection = "column";
 		this.style.height = "100%";
 		this.style.minHeight = "0";
+
+		// Load detail mode preference (default: hidden)
+		const showDetails = await getAppStorage().settings.get<boolean>("display.showDetails");
+		this._showDetails = showDetails ?? false;
 
 		// Wait for first render to get scroll container
 		await this.updateComplete;
@@ -273,6 +279,7 @@ export class AgentInterface extends LitElement {
 					.tools=${state.tools}
 					.pendingToolCalls=${this.session ? this.session.state.pendingToolCalls : new Set<string>()}
 					.isStreaming=${state.isStreaming}
+					.hideIntermediateResults=${!this._showDetails}
 					.onCostClick=${this.onCostClick}
 				></message-list>
 
@@ -283,6 +290,7 @@ export class AgentInterface extends LitElement {
 					.isStreaming=${state.isStreaming}
 					.pendingToolCalls=${state.pendingToolCalls}
 					.toolResultsById=${toolResultsById}
+					.hideIntermediateResults=${!this._showDetails}
 					.onCostClick=${this.onCostClick}
 				></streaming-message-container>
 			</div>
@@ -362,6 +370,11 @@ export class AgentInterface extends LitElement {
 							.showModelSelector=${this.enableModelSelector}
 							.showThinkingSelector=${this.enableThinkingSelector}
 							.skills=${this.skills}
+							.showDetails=${this._showDetails}
+							.onDetailsToggle=${(show: boolean) => {
+								this._showDetails = show;
+								getAppStorage().settings.set("display.showDetails", show);
+							}}
 							.onSend=${(input: string, attachments: Attachment[]) => {
 								this.sendMessage(input, attachments);
 							}}

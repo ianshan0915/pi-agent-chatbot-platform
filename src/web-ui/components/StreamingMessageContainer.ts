@@ -9,6 +9,7 @@ export class StreamingMessageContainer extends LitElement {
 	@property({ type: Object }) pendingToolCalls?: Set<string>;
 	@property({ type: Object }) toolResultsById?: Map<string, ToolResultMessage>;
 	@property({ attribute: false }) onCostClick?: () => void;
+	@property({ type: Boolean }) hideIntermediateResults = false;
 
 	@state() private _message: AgentMessage | null = null;
 	private _pendingMessage: AgentMessage | null = null;
@@ -87,7 +88,9 @@ export class StreamingMessageContainer extends LitElement {
 						.isStreaming=${this.isStreaming}
 						.pendingToolCalls=${this.pendingToolCalls}
 						.toolResultsById=${this.toolResultsById}
-						.hideToolCalls=${false}
+						.hideToolCalls=${this.hideIntermediateResults}
+						.hideThinking=${this.hideIntermediateResults}
+						.hideUsage=${this.hideIntermediateResults}
 						.onCostClick=${this.onCostClick}
 					></assistant-message>
 					${this.isStreaming ? html`<span class="mx-4 inline-block w-2 h-4 bg-muted-foreground animate-pulse"></span>` : ""}

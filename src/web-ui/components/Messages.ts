@@ -103,9 +103,11 @@ export class AssistantMessage extends LitElement {
 	@property({ type: Array }) tools?: AgentTool<any>[];
 	@property({ type: Object }) pendingToolCalls?: Set<string>;
 	@property({ type: Boolean }) hideToolCalls = false;
+	@property({ type: Boolean }) hideThinking = false;
 	@property({ type: Object }) toolResultsById?: Map<string, ToolResultMessageType>;
 	@property({ type: Boolean }) isStreaming: boolean = false;
 	@property({ type: Boolean }) hidePendingToolCalls = false;
+	@property({ type: Boolean }) hideUsage = false;
 	@property({ attribute: false }) onCostClick?: () => void;
 
 	protected override createRenderRoot(): HTMLElement | DocumentFragment {
@@ -125,9 +127,11 @@ export class AssistantMessage extends LitElement {
 			if (chunk.type === "text" && chunk.text.trim() !== "") {
 				orderedParts.push(html`<markdown-block .content=${chunk.text}></markdown-block>`);
 			} else if (chunk.type === "thinking" && chunk.thinking.trim() !== "") {
-				orderedParts.push(
-					html`<thinking-block .content=${chunk.thinking} .isStreaming=${this.isStreaming}></thinking-block>`,
-				);
+				if (!this.hideThinking) {
+					orderedParts.push(
+						html`<thinking-block .content=${chunk.thinking} .isStreaming=${this.isStreaming}></thinking-block>`,
+					);
+				}
 			} else if (chunk.type === "toolCall") {
 				if (!this.hideToolCalls) {
 					const tool = this.tools?.find((t) => t.name === chunk.name);
@@ -158,7 +162,7 @@ export class AssistantMessage extends LitElement {
 			<div>
 				${orderedParts.length ? html` <div class="px-4 flex flex-col gap-3">${orderedParts}</div> ` : ""}
 				${
-					this.message.usage && !this.isStreaming
+					this.message.usage && !this.isStreaming && !this.hideUsage
 						? this.onCostClick
 							? html` <div class="px-4 mt-2 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors" @click=${this.onCostClick}>${formatUsage(this.message.usage)}</div> `
 							: html` <div class="px-4 mt-2 text-xs text-muted-foreground">${formatUsage(this.message.usage)}</div> `

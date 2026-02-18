@@ -204,6 +204,8 @@ declare module "@mariozechner/mini-lit" {
 		"Anthropic Messages Compatible": string;
 		"Checking...": string;
 		Disconnected: string;
+		"Hide details": string;
+		"Show details": string;
 	}
 }
 
@@ -426,6 +428,8 @@ export const translations = {
 		"Anthropic Messages Compatible": "Anthropic Messages Compatible",
 		"Checking...": "Checking...",
 		Disconnected: "Disconnected",
+		"Hide details": "Hide details",
+		"Show details": "Show details",
 	},
 	de: {
 		...defaultGerman,
@@ -645,6 +649,8 @@ export const translations = {
 		"Anthropic Messages Compatible": "Anthropic Messages Kompatibel",
 		"Checking...": "Überprüfe...",
 		Disconnected: "Getrennt",
+		"Hide details": "Details ausblenden",
+		"Show details": "Details anzeigen",
 	},
 };
 
