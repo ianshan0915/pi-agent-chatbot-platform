@@ -13,6 +13,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/permissions.js";
 import type { CryptoService } from "../services/crypto.js";
 import { PROVIDER_ENV_MAP } from "../ws-bridge.js";
+import { asyncRoute } from "../utils/async-handler.js";
 
 const VALID_PROVIDERS = new Set(Object.keys(PROVIDER_ENV_MAP));
 
@@ -25,114 +26,99 @@ export function createProviderKeysRouter(crypto: CryptoService): Router {
 	// -----------------------------------------------------------------------
 	// GET / — List configured providers (never returns actual keys)
 	// -----------------------------------------------------------------------
-	router.get("/", async (req: Request, res: Response) => {
-		try {
-			const db = getDatabase();
-			const result = await db.query<Pick<ProviderKeyRow, "provider" | "updated_at">>(
-				`SELECT provider, updated_at FROM provider_keys WHERE team_id = $1 ORDER BY provider`,
-				[req.user!.teamId],
-			);
+	router.get("/", asyncRoute(async (req, res) => {
+		const db = getDatabase();
+		const result = await db.query<Pick<ProviderKeyRow, "provider" | "updated_at">>(
+			`SELECT provider, updated_at FROM provider_keys WHERE team_id = $1 ORDER BY provider`,
+			[req.user!.teamId],
+		);
 
-			const keys = result.rows.map((row) => ({
-				provider: row.provider,
-				hasKey: true,
-				updatedAt: row.updated_at,
-			}));
+		const keys = result.rows.map((row) => ({
+			provider: row.provider,
+			hasKey: true,
+			updatedAt: row.updated_at,
+		}));
 
-			res.json({ success: true, data: { keys } });
-		} catch (err) {
-			console.error("[provider-keys] GET / error:", err);
-			res.status(500).json({ success: false, error: "Internal server error" });
-		}
-	});
+		res.json({ success: true, data: { keys } });
+	}));
 
 	// -----------------------------------------------------------------------
 	// POST / — Create or update a provider key
 	// -----------------------------------------------------------------------
-	router.post("/", async (req: Request, res: Response) => {
-		try {
-			const { provider, apiKey } = req.body;
+	router.post("/", asyncRoute(async (req, res) => {
+		const { provider, apiKey } = req.body;
 
-			if (!provider || typeof provider !== "string") {
-				res.status(400).json({ success: false, error: "provider is required" });
-				return;
-			}
-			if (!apiKey || typeof apiKey !== "string") {
-				res.status(400).json({ success: false, error: "apiKey is required" });
-				return;
-			}
-			if (!VALID_PROVIDERS.has(provider)) {
-				res.status(400).json({
-					success: false,
-					error: `Invalid provider. Valid providers: ${Array.from(VALID_PROVIDERS).join(", ")}`,
-				});
-				return;
-			}
-
-			const envelope = crypto.encrypt(apiKey);
-			const db = getDatabase();
-
-			await db.query(
-				`INSERT INTO provider_keys (team_id, provider, encrypted_dek, encrypted_key, iv, key_version)
-				 VALUES ($1, $2, $3, $4, $5, $6)
-				 ON CONFLICT (team_id, provider)
-				 DO UPDATE SET encrypted_dek = $3, encrypted_key = $4, iv = $5,
-				              key_version = $6, updated_at = now()`,
-				[
-					req.user!.teamId,
-					provider,
-					envelope.encryptedDek,
-					envelope.encryptedData,
-					envelope.iv,
-					envelope.keyVersion,
-				],
-			);
-
-			// Audit log
-			await db.query(
-				`INSERT INTO provider_key_audit_log (team_id, user_id, provider, action)
-				 VALUES ($1, $2, $3, $4)`,
-				[req.user!.teamId, req.user!.userId, provider, "create"],
-			);
-
-			res.status(201).json({ success: true, data: { provider } });
-		} catch (err) {
-			console.error("[provider-keys] POST / error:", err);
-			res.status(500).json({ success: false, error: "Internal server error" });
+		if (!provider || typeof provider !== "string") {
+			res.status(400).json({ success: false, error: "provider is required" });
+			return;
 		}
-	});
+		if (!apiKey || typeof apiKey !== "string") {
+			res.status(400).json({ success: false, error: "apiKey is required" });
+			return;
+		}
+		if (!VALID_PROVIDERS.has(provider)) {
+			res.status(400).json({
+				success: false,
+				error: `Invalid provider. Valid providers: ${Array.from(VALID_PROVIDERS).join(", ")}`,
+			});
+			return;
+		}
+
+		const envelope = crypto.encrypt(apiKey);
+		const db = getDatabase();
+
+		await db.query(
+			`INSERT INTO provider_keys (team_id, provider, encrypted_dek, encrypted_key, iv, key_version)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (team_id, provider)
+			 DO UPDATE SET encrypted_dek = $3, encrypted_key = $4, iv = $5,
+			              key_version = $6, updated_at = now()`,
+			[
+				req.user!.teamId,
+				provider,
+				envelope.encryptedDek,
+				envelope.encryptedData,
+				envelope.iv,
+				envelope.keyVersion,
+			],
+		);
+
+		// Audit log
+		await db.query(
+			`INSERT INTO provider_key_audit_log (team_id, user_id, provider, action)
+			 VALUES ($1, $2, $3, $4)`,
+			[req.user!.teamId, req.user!.userId, provider, "create"],
+		);
+
+		res.status(201).json({ success: true, data: { provider } });
+	}));
 
 	// -----------------------------------------------------------------------
 	// DELETE /:provider — Delete a provider key
 	// -----------------------------------------------------------------------
-	router.delete("/:provider", async (req: Request, res: Response) => {
-		try {
-			const { provider } = req.params;
+	router.delete("/:provider", asyncRoute(async (req, res) => {
+		const { provider } = req.params;
 
-			const db = getDatabase();
-			const result = await db.query(
-				`DELETE FROM provider_keys WHERE team_id = $1 AND provider = $2`,
-				[req.user!.teamId, provider],
-			);
+		const db = getDatabase();
+		const result = await db.query(
+			`DELETE FROM provider_keys WHERE team_id = $1 AND provider = $2`,
+			[req.user!.teamId, provider],
+		);
 
-			if (result.rowCount === 0) {
-				res.status(404).json({ success: false, error: "Provider key not found" });
-				return;
-			}
-
-			// Audit log
-			await db.query(
-				`INSERT INTO provider_key_audit_log (team_id, user_id, provider, action)
-				 VALUES ($1, $2, $3, $4)`,
-				[req.user!.teamId, req.user!.userId, provider, "delete"],
-			);
-
-			res.json({ success: true });
-		} catch (err) {
-			console.error("[provider-keys] DELETE /:provider error:", err);
-			res.status(500).json({ success: false, error: "Internal server error" });
+		if (result.rowCount === 0) {
+			res.status(404).json({ success: false, error: "Provider key not found" });
+			return;
 		}
-	});
+
+		// Audit log
+		await db.query(
+			`INSERT INTO provider_key_audit_log (team_id, user_id, provider, action)
+			 VALUES ($1, $2, $3, $4)`,
+			[req.user!.teamId, req.user!.userId, provider, "delete"],
+		);
+
+		res.json({ success: true });
+	}));
 
 	return router;
 }

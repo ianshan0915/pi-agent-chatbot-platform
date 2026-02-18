@@ -6,30 +6,11 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import * as path from "node:path";
 import * as readline from "node:readline";
-import { fileURLToPath } from "node:url";
 import type { WebSocket } from "ws";
-
-/** Provider name → environment variable name mapping */
-export const PROVIDER_ENV_MAP: Record<string, string> = {
-	anthropic: "ANTHROPIC_API_KEY",
-	openai: "OPENAI_API_KEY",
-	google: "GEMINI_API_KEY",
-	groq: "GROQ_API_KEY",
-	cerebras: "CEREBRAS_API_KEY",
-	xai: "XAI_API_KEY",
-	openrouter: "OPENROUTER_API_KEY",
-	"vercel-ai-gateway": "AI_GATEWAY_API_KEY",
-	zai: "ZAI_API_KEY",
-	mistral: "MISTRAL_API_KEY",
-	minimax: "MINIMAX_API_KEY",
-	"minimax-cn": "MINIMAX_CN_API_KEY",
-	huggingface: "HF_TOKEN",
-	opencode: "OPENCODE_API_KEY",
-	"kimi-coding": "KIMI_API_KEY",
-};
+import { resolvePiCommand } from "./utils/resolve-command.js";
+import { PROVIDER_ENV_MAP } from "./utils/provider-env-map.js";
+export { PROVIDER_ENV_MAP } from "./utils/provider-env-map.js";
 
 export interface BridgeOptions {
 	/** Working directory for the agent */
@@ -132,7 +113,7 @@ export class WsBridge {
 	 * Spawn the pi --mode rpc child process.
 	 */
 	protected spawnProcess(): void {
-		const { command, commandArgs } = this.resolveCommand();
+		const { command, commandArgs } = resolvePiCommand();
 		const args = [...commandArgs, "--mode", "rpc"];
 
 		if (this.options.provider) {
@@ -212,29 +193,4 @@ export class WsBridge {
 		}
 	}
 
-	/**
-	 * Resolve the command to spawn. Priority:
-	 * 1. PI_CLI_PATH env var (explicit path to cli.js, run with node)
-	 * 2. Built dist/cli.js in sibling coding-agent package
-	 * 3. Globally installed `pi` command
-	 */
-	private resolveCommand(): { command: string; commandArgs: string[] } {
-		if (process.env.PI_CLI_PATH) {
-			return { command: "node", commandArgs: [process.env.PI_CLI_PATH] };
-		}
-
-		const candidates = [
-			path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../coding-agent/dist/cli.js"),
-			path.resolve(process.cwd(), "../coding-agent/dist/cli.js"),
-			path.resolve(process.cwd(), "node_modules/@mariozechner/pi-coding-agent/dist/cli.js"),
-		];
-
-		for (const candidate of candidates) {
-			if (existsSync(candidate)) {
-				return { command: "node", commandArgs: [candidate] };
-			}
-		}
-
-		return { command: "pi", commandArgs: [] };
-	}
 }

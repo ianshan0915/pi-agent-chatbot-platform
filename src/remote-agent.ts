@@ -148,33 +148,14 @@ export class RemoteAgent {
 		this.send({ type: "follow_up", message });
 	}
 
-	replaceMessages(_ms: AgentMessage[]): void {
-		// No-op: messages managed server-side
-	}
-
-	appendMessage(_m: AgentMessage): void {
-		// No-op: messages managed server-side
-	}
-
-	clearMessages(): void {
-		// No-op
-	}
-
-	clearSteeringQueue(): void {
-		// No-op: queue is server-side
-	}
-
-	clearFollowUpQueue(): void {
-		// No-op
-	}
-
-	clearAllQueues(): void {
-		// No-op
-	}
-
-	hasQueuedMessages(): boolean {
-		return false;
-	}
+	// Required by Agent interface but no-ops — state is managed server-side
+	replaceMessages(_ms: AgentMessage[]): void {}
+	appendMessage(_m: AgentMessage): void {}
+	clearMessages(): void {}
+	clearSteeringQueue(): void {}
+	clearFollowUpQueue(): void {}
+	clearAllQueues(): void {}
+	hasQueuedMessages(): boolean { return false; }
 
 	waitForIdle(): Promise<void> {
 		if (!this._state.isStreaming) return Promise.resolve();

@@ -50,27 +50,11 @@ export class AuthClient {
   }
 
   async login(email: string, password: string): Promise<AuthResponse> {
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error || "Login failed");
-    this.setAuth(body.data);
-    return body.data;
+    return this.postAuth("/api/auth/login", { email, password }, "Login failed");
   }
 
   async register(email: string, password: string, displayName?: string, teamName?: string): Promise<AuthResponse> {
-    const res = await fetch("/api/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, displayName, teamName }),
-    });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error || "Registration failed");
-    this.setAuth(body.data);
-    return body.data;
+    return this.postAuth("/api/auth/register", { email, password, displayName, teamName }, "Registration failed");
   }
 
   logout(): void {
@@ -86,6 +70,18 @@ export class AuthClient {
   onAuthChange(callback: (user: AuthUser | null) => void): () => void {
     this.listeners.add(callback);
     return () => this.listeners.delete(callback);
+  }
+
+  private async postAuth(url: string, payload: Record<string, unknown>, fallbackError: string): Promise<AuthResponse> {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || fallbackError);
+    this.setAuth(body.data);
+    return body.data;
   }
 
   private setAuth(data: AuthResponse): void {

@@ -9,18 +9,17 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import * as path from "node:path";
 import * as readline from "node:readline";
-import { fileURLToPath } from "node:url";
 import type { WebSocket } from "ws";
+import { resolvePiCommand } from "./utils/resolve-command.js";
 import type { CryptoService } from "./services/crypto.js";
 import type { ProcessPool } from "./services/process-pool.js";
 import type { StorageService } from "./services/storage.js";
 import { OAuthService } from "./services/oauth-service.js";
 import { resolveSkillsForUser, type ResolvedSkills } from "./services/skill-resolver.js";
 import type { Database, ProviderKeyRow } from "./db/types.js";
-import { WsBridge, PROVIDER_ENV_MAP, type BridgeOptions } from "./ws-bridge.js";
+import { WsBridge, type BridgeOptions } from "./ws-bridge.js";
+import { PROVIDER_ENV_MAP, OAUTH_PROVIDER_ENV_MAP } from "./utils/provider-env-map.js";
 
 export interface AuthUser {
 	userId: string;
@@ -177,17 +176,8 @@ export class TenantBridge extends WsBridge {
 	private async injectOAuthCredentials(): Promise<void> {
 		const oauthService = new OAuthService(this.db, this.crypto);
 
-		// Provider ID to environment variable mapping for OAuth providers
-		const oauthProviderEnvMap: Record<string, string> = {
-			anthropic: "ANTHROPIC_API_KEY",
-			"openai-codex": "OPENAI_API_KEY",
-			"github-copilot": "ANTHROPIC_API_KEY", // GitHub Copilot uses Anthropic backend
-			"google-gemini-cli": "GEMINI_API_KEY",
-			"google-antigravity": "GEMINI_API_KEY",
-		};
-
 		// Try to get OAuth credentials for each supported provider
-		for (const [providerId, envVar] of Object.entries(oauthProviderEnvMap)) {
+		for (const [providerId, envVar] of Object.entries(OAUTH_PROVIDER_ENV_MAP)) {
 			try {
 				const apiKey = await oauthService.getApiKey(providerId as any, { userId: this.user.userId });
 				if (apiKey) {
@@ -207,30 +197,7 @@ export class TenantBridge extends WsBridge {
 	 * without wiring up I/O (the pool manages lifecycle).
 	 */
 	private createProcess(): ChildProcess {
-		// Resolve command (same logic as WsBridge.resolveCommand)
-		let command: string;
-		let commandArgs: string[];
-
-		if (process.env.PI_CLI_PATH) {
-			command = "node";
-			commandArgs = [process.env.PI_CLI_PATH];
-		} else {
-			const candidates = [
-				path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../coding-agent/dist/cli.js"),
-				path.resolve(process.cwd(), "../coding-agent/dist/cli.js"),
-				path.resolve(process.cwd(), "node_modules/@mariozechner/pi-coding-agent/dist/cli.js"),
-			];
-
-			const found = candidates.find((c) => existsSync(c));
-			if (found) {
-				command = "node";
-				commandArgs = [found];
-			} else {
-				command = "pi";
-				commandArgs = [];
-			}
-		}
-
+		const { command, commandArgs } = resolvePiCommand();
 		const args = [...commandArgs, "--mode", "rpc"];
 		if (this.options.provider) args.push("--provider", this.options.provider);
 		if (this.options.model) args.push("--model", this.options.model);

@@ -13,6 +13,7 @@ import { getDatabase } from "../db/index.js";
 import type { SkillRow } from "../db/types.js";
 import { requireAuth } from "../auth/middleware.js";
 import type { StorageService } from "../services/storage.js";
+import { asyncRoute } from "../utils/async-handler.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } }); // 25MB max
 
@@ -177,222 +178,202 @@ export function createSkillsRouter(storage: StorageService): Router {
 	// -----------------------------------------------------------------------
 	// GET / — List visible skills (platform + user's team + user's own)
 	// -----------------------------------------------------------------------
-	router.get("/", async (req: Request, res: Response) => {
-		try {
-			const db = getDatabase();
-			const result = await db.query<SkillRow>(
-				`SELECT id, scope, owner_id, name, description, format, created_at, updated_at
-				 FROM skills
-				 WHERE (scope = 'platform')
-				    OR (scope = 'team' AND owner_id = $1)
-				    OR (scope = 'user' AND owner_id = $2)
-				 ORDER BY scope, name`,
-				[req.user!.teamId, req.user!.userId],
-			);
+	router.get("/", asyncRoute(async (req, res) => {
+		const db = getDatabase();
+		const result = await db.query<SkillRow>(
+			`SELECT id, scope, owner_id, name, description, format, created_at, updated_at
+			 FROM skills
+			 WHERE (scope = 'platform')
+			    OR (scope = 'team' AND owner_id = $1)
+			    OR (scope = 'user' AND owner_id = $2)
+			 ORDER BY scope, name`,
+			[req.user!.teamId, req.user!.userId],
+		);
 
-			res.json({ success: true, data: { skills: result.rows } });
-		} catch (err) {
-			console.error("[skills] GET / error:", err);
-			res.status(500).json({ success: false, error: "Internal server error" });
-		}
-	});
+		res.json({ success: true, data: { skills: result.rows } });
+	}));
 
 	// -----------------------------------------------------------------------
 	// POST / — Upload a new skill (multipart: file + scope field)
 	// -----------------------------------------------------------------------
-	router.post("/", upload.single("file"), async (req: Request, res: Response) => {
-		try {
-			const scope = req.body.scope as string;
-			if (!scope || !["platform", "team", "user"].includes(scope)) {
-				res.status(400).json({ success: false, error: "scope must be 'platform', 'team', or 'user'" });
-				return;
-			}
-
-			// Authorization: platform/team scope requires admin
-			if ((scope === "platform" || scope === "team") && req.user!.role !== "admin") {
-				res.status(403).json({ success: false, error: "Only admins can create platform/team skills" });
-				return;
-			}
-
-			if (!req.file) {
-				res.status(400).json({ success: false, error: "file field (SKILL.md or .zip) is required" });
-				return;
-			}
-
-			// Determine owner_id based on scope
-			const ownerId = scope === "team" ? req.user!.teamId : scope === "platform" ? req.user!.teamId : req.user!.userId;
-			const db = getDatabase();
-
-			const originalName = req.file.originalname.toLowerCase();
-			const isZip = originalName.endsWith(".zip");
-
-			if (isZip) {
-				// --- Zip bundle upload ---
-				const result = await processZipBundle(req.file.buffer);
-				if ("error" in result) {
-					res.status(400).json({ success: false, error: result.error });
-					return;
-				}
-
-				const storagePrefix = `skills/${ownerId}/${result.name}/`;
-
-				// Delete any previously stored files for this skill
-				await storage.deleteByPrefix(storagePrefix);
-
-				// Store each extracted file
-				for (const file of result.files) {
-					await storage.upload(storagePrefix + file.path, file.data);
-				}
-
-				// Upsert metadata
-				await db.query(
-					`INSERT INTO skills (scope, owner_id, name, description, format, storage_key)
-					 VALUES ($1, $2, $3, $4, 'zip', $5)
-					 ON CONFLICT (scope, owner_id, name)
-					 DO UPDATE SET description = $4, format = 'zip', storage_key = $5, updated_at = now()`,
-					[scope, ownerId, result.name, result.description, storagePrefix],
-				);
-
-				res.status(201).json({ success: true, data: { name: result.name, scope, format: "zip" } });
-			} else {
-				// --- Single SKILL.md upload ---
-				const content = req.file.buffer.toString("utf-8");
-				const parsed = parseSkillMd(content);
-				if ("error" in parsed) {
-					res.status(400).json({ success: false, error: parsed.error });
-					return;
-				}
-
-				const storageKey = `skills/${ownerId}/${parsed.name}/SKILL.md`;
-
-				// If re-uploading as md, clean up any previous zip files
-				const existing = await db.query<SkillRow>(
-					`SELECT format, storage_key FROM skills WHERE scope = $1 AND owner_id = $2 AND name = $3`,
-					[scope, ownerId, parsed.name],
-				);
-				if (existing.rows.length > 0 && existing.rows[0].format === "zip") {
-					await storage.deleteByPrefix(existing.rows[0].storage_key);
-				}
-
-				await storage.upload(storageKey, req.file.buffer, "text/markdown");
-
-				await db.query(
-					`INSERT INTO skills (scope, owner_id, name, description, format, storage_key)
-					 VALUES ($1, $2, $3, $4, 'md', $5)
-					 ON CONFLICT (scope, owner_id, name)
-					 DO UPDATE SET description = $4, format = 'md', storage_key = $5, updated_at = now()`,
-					[scope, ownerId, parsed.name, parsed.description, storageKey],
-				);
-
-				res.status(201).json({ success: true, data: { name: parsed.name, scope, format: "md" } });
-			}
-		} catch (err) {
-			console.error("[skills] POST / error:", err);
-			res.status(500).json({ success: false, error: "Internal server error" });
+	router.post("/", upload.single("file"), asyncRoute(async (req, res) => {
+		const scope = req.body.scope as string;
+		if (!scope || !["platform", "team", "user"].includes(scope)) {
+			res.status(400).json({ success: false, error: "scope must be 'platform', 'team', or 'user'" });
+			return;
 		}
-	});
+
+		// Authorization: platform/team scope requires admin
+		if ((scope === "platform" || scope === "team") && req.user!.role !== "admin") {
+			res.status(403).json({ success: false, error: "Only admins can create platform/team skills" });
+			return;
+		}
+
+		if (!req.file) {
+			res.status(400).json({ success: false, error: "file field (SKILL.md or .zip) is required" });
+			return;
+		}
+
+		// Determine owner_id based on scope
+		const ownerId = scope === "team" ? req.user!.teamId : scope === "platform" ? req.user!.teamId : req.user!.userId;
+		const db = getDatabase();
+
+		const originalName = req.file.originalname.toLowerCase();
+		const isZip = originalName.endsWith(".zip");
+
+		if (isZip) {
+			// --- Zip bundle upload ---
+			const result = await processZipBundle(req.file.buffer);
+			if ("error" in result) {
+				res.status(400).json({ success: false, error: result.error });
+				return;
+			}
+
+			const storagePrefix = `skills/${ownerId}/${result.name}/`;
+
+			// Delete any previously stored files for this skill
+			await storage.deleteByPrefix(storagePrefix);
+
+			// Store each extracted file
+			for (const file of result.files) {
+				await storage.upload(storagePrefix + file.path, file.data);
+			}
+
+			// Upsert metadata
+			await db.query(
+				`INSERT INTO skills (scope, owner_id, name, description, format, storage_key)
+				 VALUES ($1, $2, $3, $4, 'zip', $5)
+				 ON CONFLICT (scope, owner_id, name)
+				 DO UPDATE SET description = $4, format = 'zip', storage_key = $5, updated_at = now()`,
+				[scope, ownerId, result.name, result.description, storagePrefix],
+			);
+
+			res.status(201).json({ success: true, data: { name: result.name, scope, format: "zip" } });
+		} else {
+			// --- Single SKILL.md upload ---
+			const content = req.file.buffer.toString("utf-8");
+			const parsed = parseSkillMd(content);
+			if ("error" in parsed) {
+				res.status(400).json({ success: false, error: parsed.error });
+				return;
+			}
+
+			const storageKey = `skills/${ownerId}/${parsed.name}/SKILL.md`;
+
+			// If re-uploading as md, clean up any previous zip files
+			const existing = await db.query<SkillRow>(
+				`SELECT format, storage_key FROM skills WHERE scope = $1 AND owner_id = $2 AND name = $3`,
+				[scope, ownerId, parsed.name],
+			);
+			if (existing.rows.length > 0 && existing.rows[0].format === "zip") {
+				await storage.deleteByPrefix(existing.rows[0].storage_key);
+			}
+
+			await storage.upload(storageKey, req.file.buffer, "text/markdown");
+
+			await db.query(
+				`INSERT INTO skills (scope, owner_id, name, description, format, storage_key)
+				 VALUES ($1, $2, $3, $4, 'md', $5)
+				 ON CONFLICT (scope, owner_id, name)
+				 DO UPDATE SET description = $4, format = 'md', storage_key = $5, updated_at = now()`,
+				[scope, ownerId, parsed.name, parsed.description, storageKey],
+			);
+
+			res.status(201).json({ success: true, data: { name: parsed.name, scope, format: "md" } });
+		}
+	}));
 
 	// -----------------------------------------------------------------------
 	// GET /:id/download — Download skill content
 	// -----------------------------------------------------------------------
-	router.get("/:id/download", async (req: Request, res: Response) => {
-		try {
-			const db = getDatabase();
-			const result = await db.query<SkillRow>(
-				`SELECT * FROM skills WHERE id = $1`,
-				[req.params.id],
-			);
+	router.get("/:id/download", asyncRoute(async (req, res) => {
+		const db = getDatabase();
+		const result = await db.query<SkillRow>(
+			`SELECT * FROM skills WHERE id = $1`,
+			[req.params.id],
+		);
 
-			if (result.rows.length === 0) {
-				res.status(404).json({ success: false, error: "Skill not found" });
-				return;
-			}
-
-			const skill = result.rows[0];
-
-			// Check visibility
-			const canAccess =
-				skill.scope === "platform" ||
-				(skill.scope === "team" && skill.owner_id === req.user!.teamId) ||
-				(skill.scope === "user" && skill.owner_id === req.user!.userId);
-
-			if (!canAccess) {
-				res.status(403).json({ success: false, error: "Access denied" });
-				return;
-			}
-
-			if (skill.format === "zip") {
-				// Re-zip all files under the storage prefix
-				const keys = await storage.listByPrefix(skill.storage_key);
-				const zip = new JSZip();
-
-				for (const key of keys) {
-					// key is like "skills/owner/name/SKILL.md" — strip the storage_key prefix
-					const relativePath = key.startsWith(skill.storage_key)
-						? key.slice(skill.storage_key.length)
-						: key;
-					const data = await storage.download(key);
-					zip.file(relativePath, data);
-				}
-
-				const zipBuffer = await zip.generateAsync({ type: "nodebuffer" });
-				res.setHeader("Content-Type", "application/zip");
-				res.setHeader("Content-Disposition", `attachment; filename="${skill.name}.zip"`);
-				res.send(zipBuffer);
-			} else {
-				const data = await storage.download(skill.storage_key);
-				res.setHeader("Content-Type", "text/markdown");
-				res.setHeader("Content-Disposition", `attachment; filename="SKILL.md"`);
-				res.send(data);
-			}
-		} catch (err) {
-			console.error("[skills] GET /:id/download error:", err);
-			res.status(500).json({ success: false, error: "Internal server error" });
+		if (result.rows.length === 0) {
+			res.status(404).json({ success: false, error: "Skill not found" });
+			return;
 		}
-	});
+
+		const skill = result.rows[0];
+
+		// Check visibility
+		const canAccess =
+			skill.scope === "platform" ||
+			(skill.scope === "team" && skill.owner_id === req.user!.teamId) ||
+			(skill.scope === "user" && skill.owner_id === req.user!.userId);
+
+		if (!canAccess) {
+			res.status(403).json({ success: false, error: "Access denied" });
+			return;
+		}
+
+		if (skill.format === "zip") {
+			// Re-zip all files under the storage prefix
+			const keys = await storage.listByPrefix(skill.storage_key);
+			const zip = new JSZip();
+
+			for (const key of keys) {
+				// key is like "skills/owner/name/SKILL.md" — strip the storage_key prefix
+				const relativePath = key.startsWith(skill.storage_key)
+					? key.slice(skill.storage_key.length)
+					: key;
+				const data = await storage.download(key);
+				zip.file(relativePath, data);
+			}
+
+			const zipBuffer = await zip.generateAsync({ type: "nodebuffer" });
+			res.setHeader("Content-Type", "application/zip");
+			res.setHeader("Content-Disposition", `attachment; filename="${skill.name}.zip"`);
+			res.send(zipBuffer);
+		} else {
+			const data = await storage.download(skill.storage_key);
+			res.setHeader("Content-Type", "text/markdown");
+			res.setHeader("Content-Disposition", `attachment; filename="SKILL.md"`);
+			res.send(data);
+		}
+	}));
 
 	// -----------------------------------------------------------------------
 	// DELETE /:id — Delete a skill
 	// -----------------------------------------------------------------------
-	router.delete("/:id", async (req: Request, res: Response) => {
-		try {
-			const db = getDatabase();
-			const result = await db.query<SkillRow>(
-				`SELECT * FROM skills WHERE id = $1`,
-				[req.params.id],
-			);
+	router.delete("/:id", asyncRoute(async (req, res) => {
+		const db = getDatabase();
+		const result = await db.query<SkillRow>(
+			`SELECT * FROM skills WHERE id = $1`,
+			[req.params.id],
+		);
 
-			if (result.rows.length === 0) {
-				res.status(404).json({ success: false, error: "Skill not found" });
-				return;
-			}
-
-			const skill = result.rows[0];
-
-			// Authorization
-			const canDelete =
-				((skill.scope === "platform" || skill.scope === "team") && req.user!.role === "admin") ||
-				(skill.scope === "user" && skill.owner_id === req.user!.userId);
-
-			if (!canDelete) {
-				res.status(403).json({ success: false, error: "Insufficient permissions" });
-				return;
-			}
-
-			// Delete from storage and DB
-			if (skill.format === "zip") {
-				await storage.deleteByPrefix(skill.storage_key);
-			} else {
-				await storage.delete(skill.storage_key);
-			}
-			await db.query(`DELETE FROM skills WHERE id = $1`, [req.params.id]);
-
-			res.json({ success: true });
-		} catch (err) {
-			console.error("[skills] DELETE /:id error:", err);
-			res.status(500).json({ success: false, error: "Internal server error" });
+		if (result.rows.length === 0) {
+			res.status(404).json({ success: false, error: "Skill not found" });
+			return;
 		}
-	});
+
+		const skill = result.rows[0];
+
+		// Authorization
+		const canDelete =
+			((skill.scope === "platform" || skill.scope === "team") && req.user!.role === "admin") ||
+			(skill.scope === "user" && skill.owner_id === req.user!.userId);
+
+		if (!canDelete) {
+			res.status(403).json({ success: false, error: "Insufficient permissions" });
+			return;
+		}
+
+		// Delete from storage and DB
+		if (skill.format === "zip") {
+			await storage.deleteByPrefix(skill.storage_key);
+		} else {
+			await storage.delete(skill.storage_key);
+		}
+		await db.query(`DELETE FROM skills WHERE id = $1`, [req.params.id]);
+
+		res.json({ success: true });
+	}));
 
 	return router;
 }

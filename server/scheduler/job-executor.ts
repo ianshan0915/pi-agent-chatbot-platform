@@ -12,12 +12,12 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
-import { fileURLToPath } from "node:url";
+import { resolvePiCommand } from "../utils/resolve-command.js";
+import { PROVIDER_ENV_MAP, OAUTH_PROVIDER_ENV_MAP } from "../utils/provider-env-map.js";
 import type { Database, ProviderKeyRow, ScheduledJobRow, UserFileRow } from "../db/types.js";
 import type { CryptoService } from "../services/crypto.js";
 import type { StorageService } from "../services/storage.js";
@@ -31,13 +31,6 @@ export interface JobExecutionResult {
 	usage?: { input: number; output: number; cache_read?: number; cache_write?: number };
 }
 
-const PROVIDER_ENV_MAP: Record<string, string> = {
-	anthropic: "ANTHROPIC_API_KEY",
-	openai: "OPENAI_API_KEY",
-	"azure-openai": "AZURE_OPENAI_API_KEY",
-	google: "GEMINI_API_KEY",
-	"google-gemini-cli": "GEMINI_API_KEY",
-};
 
 const JOB_EXECUTION_TIMEOUT_MS = parseInt(process.env.JOB_EXECUTION_TIMEOUT_MS || "300000", 10); // 5 minutes
 
@@ -113,15 +106,7 @@ export async function executeJob(
 
 		// 4b. Inject OAuth credentials (overrides team keys)
 		const oauthService = new OAuthService(db, crypto);
-		const oauthProviderEnvMap: Record<string, string> = {
-			anthropic: "ANTHROPIC_API_KEY",
-			"openai-codex": "OPENAI_API_KEY",
-			"github-copilot": "ANTHROPIC_API_KEY",
-			"google-gemini-cli": "GEMINI_API_KEY",
-			"google-antigravity": "GEMINI_API_KEY",
-		};
-
-		for (const [providerId, envVar] of Object.entries(oauthProviderEnvMap)) {
+		for (const [providerId, envVar] of Object.entries(OAUTH_PROVIDER_ENV_MAP)) {
 			try {
 				const apiKey = await oauthService.getApiKey(providerId as any, { userId: user.id });
 				if (apiKey) {
@@ -133,7 +118,7 @@ export async function executeJob(
 		}
 
 		// 5. Build command args
-		const { command, args } = resolveCommand(job, resolvedSkills, filePaths);
+		const { command, args } = buildJobArgs(job, resolvedSkills, filePaths);
 
 		console.log(`[job-executor] Spawning job ${job.id}: ${command} ${args.join(" ")}`);
 
@@ -171,34 +156,12 @@ export async function executeJob(
 /**
  * Resolve the command and args for spawning pi --mode rpc.
  */
-function resolveCommand(
+function buildJobArgs(
 	job: ScheduledJobRow,
 	resolvedSkills: ResolvedSkills | null,
 	filePaths: string[],
 ): { command: string; args: string[] } {
-	let command: string;
-	let commandArgs: string[];
-
-	if (process.env.PI_CLI_PATH) {
-		command = "node";
-		commandArgs = [process.env.PI_CLI_PATH];
-	} else {
-		const candidates = [
-			path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../coding-agent/dist/cli.js"),
-			path.resolve(process.cwd(), "../coding-agent/dist/cli.js"),
-			path.resolve(process.cwd(), "node_modules/@mariozechner/pi-coding-agent/dist/cli.js"),
-		];
-
-		const found = candidates.find((c) => existsSync(c));
-		if (found) {
-			command = "node";
-			commandArgs = [found];
-		} else {
-			command = "pi";
-			commandArgs = [];
-		}
-	}
-
+	const { command, commandArgs } = resolvePiCommand();
 	const args = [...commandArgs, "--mode", "rpc"];
 
 	// Add provider and model if specified

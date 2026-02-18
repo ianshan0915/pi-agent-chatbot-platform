@@ -33,6 +33,7 @@ import { ProcessPool } from "./services/process-pool.js";
 import { createStorageService } from "./services/storage.js";
 import { TenantBridge, type TenantBridgeOptions } from "./agent-service.js";
 import type { BridgeOptions } from "./ws-bridge.js";
+import { RENDERABLE_EXTENSIONS, BINARY_EXTENSIONS } from "../src/shared/file-extensions.js";
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const isDev = process.env.NODE_ENV !== "production";
@@ -70,21 +71,6 @@ async function main() {
 	app.use("/api/files", apiRateLimit, createFilesRouter(storageService));
 	app.use("/api/oauth", apiRateLimit, createOAuthRouter(crypto));
 	app.use("/api/jobs", apiRateLimit, createJobsRouter(storageService, crypto));
-
-	// All file extensions the artifacts panel can render
-	const RENDERABLE_EXTENSIONS = new Set([
-		"html", "htm", "svg", "md", "markdown",
-		"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico",
-		"pdf", "xlsx", "xls", "docx", "pptx", "ppt",
-		"txt", "json", "xml", "yaml", "yml", "csv",
-		"js", "ts", "jsx", "tsx", "py", "java", "c", "cpp", "h",
-		"css", "scss", "sass", "less", "sh",
-	]);
-	// Binary extensions that should be returned as base64
-	const BINARY_EXTENSIONS = new Set([
-		"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico",
-		"pdf", "xlsx", "xls", "docx", "pptx", "ppt",
-	]);
 
 	// Read files from the agent's working directory (for rendering artifacts)
 	app.get("/api/agent-files", requireAuth, apiRateLimit, async (req, res) => {

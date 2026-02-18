@@ -34,6 +34,16 @@ export class ApiStorageBackend implements StorageBackend {
 		this.getToken = options.getToken;
 	}
 
+	/** Serialize messages for batch API calls. */
+	private serializeMessages(messages: any[]): any[] {
+		return messages.map((m: any) => ({
+			role: m.role,
+			content: m.content,
+			stopReason: m.stopReason ?? m.stop_reason,
+			usage: m.usage,
+		}));
+	}
+
 	// -----------------------------------------------------------------------
 	// Initialization
 	// -----------------------------------------------------------------------
@@ -322,12 +332,7 @@ export class ApiStorageBackend implements StorageBackend {
 						this.apiFetch(`/api/sessions/${key}/messages/batch`, {
 							method: "POST",
 							body: JSON.stringify({
-								messages: newMessages.map((m: any) => ({
-									role: m.role,
-									content: m.content,
-									stopReason: m.stopReason ?? m.stop_reason,
-									usage: m.usage,
-								})),
+								messages: this.serializeMessages(newMessages),
 							}),
 						})
 							.then((res) => {
@@ -369,12 +374,7 @@ export class ApiStorageBackend implements StorageBackend {
 							return this.apiFetch(`/api/sessions/${key}/messages/batch`, {
 								method: "POST",
 								body: JSON.stringify({
-									messages: allMessages.map((m: any) => ({
-										role: m.role,
-										content: m.content,
-										stopReason: m.stopReason ?? m.stop_reason,
-										usage: m.usage,
-									})),
+									messages: this.serializeMessages(allMessages),
 								}),
 							});
 						}
