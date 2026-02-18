@@ -89,7 +89,6 @@ export class StreamingMessageContainer extends LitElement {
 						.pendingToolCalls=${this.pendingToolCalls}
 						.toolResultsById=${this.toolResultsById}
 						.hideToolCalls=${this.hideIntermediateResults}
-						.hideThinking=${this.hideIntermediateResults}
 						.hideUsage=${this.hideIntermediateResults}
 						.onCostClick=${this.onCostClick}
 					></assistant-message>

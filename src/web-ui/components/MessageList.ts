@@ -68,7 +68,6 @@ export class MessageList extends LitElement {
 						.pendingToolCalls=${this.pendingToolCalls}
 						.toolResultsById=${resultByCallId}
 						.hideToolCalls=${this.hideIntermediateResults}
-						.hideThinking=${this.hideIntermediateResults}
 						.hideUsage=${this.hideIntermediateResults}
 						.hidePendingToolCalls=${this.isStreaming}
 						.onCostClick=${this.onCostClick}

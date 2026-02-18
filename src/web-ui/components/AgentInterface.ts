@@ -380,12 +380,16 @@ export class AgentInterface extends LitElement {
 							}}
 							.onAbort=${() => session.abort()}
 							.onModelSelect=${() => {
-								ModelSelector.open(state.model, (model) => session.setModel(model));
+								ModelSelector.open(state.model, (model) => {
+									session.setModel(model);
+									this.requestUpdate();
+								});
 							}}
 							.onThinkingChange=${
 								this.enableThinkingSelector
 									? (level: "off" | "minimal" | "low" | "medium" | "high") => {
 											session.setThinkingLevel(level);
+											this.requestUpdate();
 										}
 									: undefined
 							}
