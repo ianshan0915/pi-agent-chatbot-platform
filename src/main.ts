@@ -301,7 +301,7 @@ function openDialog(opts: { title: string; tag: string; style?: string; setup?: 
 	const dialog = document.createElement("dialog");
 	dialog.style.cssText = opts.style || "";
 	dialog.innerHTML = `
-		<div style="min-width: 500px; max-width: 600px; padding: 1rem;">
+		<div style="min-width: 500px; padding: 1rem;">
 			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
 				<h2 style="margin: 0; font-size: 1.125rem;">${opts.title}</h2>
 				<button onclick="this.closest('dialog').close()" style="background: none; border: none; cursor: pointer; font-size: 1.25rem;">&times;</button>

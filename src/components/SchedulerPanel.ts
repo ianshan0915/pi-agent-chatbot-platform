@@ -91,6 +91,14 @@ export class SchedulerPanel extends LitElement {
 			font-weight: 600;
 			font-size: 0.875rem;
 		}
+		.job-prompt-preview {
+			font-size: 0.75rem;
+			color: var(--muted-foreground, #6b7280);
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+			cursor: default;
+		}
 		.job-details {
 			font-size: 0.75rem;
 			color: var(--muted-foreground, #6b7280);
@@ -511,6 +519,7 @@ export class SchedulerPanel extends LitElement {
 										? html`<span class="status-badge status-${job.last_status}">${job.last_status}</span>`
 										: ""}
 								</div>
+								<div class="job-prompt-preview" title=${job.prompt}>${job.prompt}</div>
 								<div class="job-details">
 									${job.cron_expr} • Next: ${new Date(job.next_run_at).toLocaleString()}
 								</div>

@@ -111,6 +111,12 @@ export class TasksDashboard extends LitElement {
 			overflow: hidden;
 			text-overflow: ellipsis;
 			white-space: nowrap;
+			cursor: default;
+		}
+		.task-item.expanded .task-prompt {
+			white-space: normal;
+			overflow: visible;
+			text-overflow: unset;
 		}
 		.task-meta {
 			display: flex;
@@ -607,9 +613,9 @@ export class TasksDashboard extends LitElement {
 		const token = this.getToken?.();
 
 		return html`
-			<div class="task-item" @click=${() => this.handleExpandTask(task)}>
+			<div class="task-item ${isExpanded ? "expanded" : ""}" @click=${() => this.handleExpandTask(task)}>
 				<div class="task-header">
-					<span class="task-prompt">${task.prompt}</span>
+					<span class="task-prompt" title=${task.prompt}>${task.prompt}</span>
 					<span class="status-badge status-${task.status}">${task.status}</span>
 				</div>
 
