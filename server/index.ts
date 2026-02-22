@@ -28,6 +28,7 @@ import { createFilesRouter } from "./routes/files.js";
 import { createOAuthRouter } from "./routes/oauth.js";
 import { createJobsRouter } from "./routes/jobs.js";
 import { createTasksRouter } from "./routes/tasks.js";
+import { createAgentProfilesRouter } from "./routes/agent-profiles.js";
 import { requireAuth } from "./auth/middleware.js";
 import { createCryptoService } from "./services/crypto.js";
 import { ProcessPool } from "./services/process-pool.js";
@@ -37,6 +38,7 @@ import { ArtifactCollector } from "./services/artifact-collector.js";
 import { TaskQueueService } from "./services/task-queue.js";
 import { TenantBridge, type TenantBridgeOptions } from "./agent-service.js";
 import type { BridgeOptions } from "./ws-bridge.js";
+import type { AgentProfileRow } from "./db/types.js";
 import { RENDERABLE_EXTENSIONS, BINARY_EXTENSIONS } from "../src/shared/file-extensions.js";
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -80,6 +82,7 @@ async function main() {
 	app.use("/api/oauth", apiRateLimit, createOAuthRouter(crypto));
 	app.use("/api/jobs", apiRateLimit, createJobsRouter(storageService, crypto));
 	app.use("/api/tasks", apiRateLimit, createTasksRouter(storageService, crypto, taskQueueService));
+	app.use("/api/agent-profiles", apiRateLimit, createAgentProfilesRouter());
 
 	// Read files from the agent's working directory (for rendering artifacts)
 	app.get("/api/agent-files", requireAuth, apiRateLimit, async (req, res) => {
@@ -129,7 +132,7 @@ async function main() {
 	const server = createServer(app);
 	const wss = new WebSocketServer({ noServer: true });
 
-	wss.on("connection", (ws, req) => {
+	wss.on("connection", async (ws, req) => {
 		// Auth user is attached by the upgrade handler
 		const user = (req as any).__authUser;
 		console.log(`[server] New WebSocket connection from ${user?.email || "unknown"}`);
@@ -148,6 +151,45 @@ async function main() {
 			activeUserCwds.set(user.userId, options.cwd);
 		}
 
+		// Resolve agent profile if specified
+		const agentProfileId = url.searchParams.get("agentProfileId") || undefined;
+		let profileSkillIds: string[] | undefined;
+
+		if (agentProfileId) {
+			try {
+				const profileResult = await db.query<AgentProfileRow>(
+					`SELECT * FROM agent_profiles WHERE id = $1
+					 AND ((scope = 'platform')
+					   OR (scope = 'team' AND owner_id = $2)
+					   OR (scope = 'user' AND owner_id = $3))`,
+					[agentProfileId, user.teamId, user.userId],
+				);
+				const profile = profileResult.rows[0];
+				if (profile) {
+					// Profile fields applied as defaults (explicit query params override)
+					if (!options.provider && profile.provider) options.provider = profile.provider;
+					if (!options.model && profile.model_id) options.model = profile.model_id;
+					// System prompt from profile
+					if (profile.prompt_mode === "append") {
+						options.appendSystemPrompt = profile.system_prompt;
+					} else {
+						options.systemPrompt = profile.system_prompt;
+					}
+					profileSkillIds = profile.skill_ids ?? undefined;
+					// Increment use count (fire-and-forget)
+					db.query(
+						`UPDATE agent_profiles SET use_count = use_count + 1 WHERE id = $1`,
+						[agentProfileId],
+					).catch(() => {});
+					console.log(`[server] Using agent profile "${profile.name}" (${agentProfileId})`);
+				} else {
+					console.warn(`[server] Agent profile ${agentProfileId} not found or not accessible`);
+				}
+			} catch (err) {
+				console.error("[server] Failed to resolve agent profile:", err);
+			}
+		}
+
 		// Use TenantBridge with server-side key management
 		const tenantOptions: TenantBridgeOptions = {
 			...options,
@@ -162,6 +204,8 @@ async function main() {
 			crypto,
 			db,
 			storage: storageService,
+			profileSkillIds,
+			agentProfileId,
 		};
 
 		const bridge = new TenantBridge(ws, tenantOptions);

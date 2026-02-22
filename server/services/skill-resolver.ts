@@ -26,15 +26,35 @@ export async function resolveSkillsForUser(
 	storage: StorageService,
 	userId: string,
 	teamId: string,
+	filterIds?: string[],
 ): Promise<ResolvedSkills> {
-	const result = await db.query<SkillRow>(
-		`SELECT name, format, storage_key FROM skills
-		 WHERE (scope = 'platform')
-		    OR (scope = 'team' AND owner_id = $1)
-		    OR (scope = 'user' AND owner_id = $2)
-		 ORDER BY scope, name`,
-		[teamId, userId],
-	);
+	let result;
+	if (filterIds && filterIds.length > 0) {
+		// Resolve only specific skills by ID (used by agent profiles)
+		// Still enforce visibility — user can only access skills in their scope
+		result = await db.query<SkillRow>(
+			`SELECT name, format, storage_key FROM skills
+			 WHERE id = ANY($1)
+			   AND ((scope = 'platform')
+			     OR (scope = 'team' AND owner_id = $2)
+			     OR (scope = 'user' AND owner_id = $3))
+			 ORDER BY scope, name`,
+			[filterIds, teamId, userId],
+		);
+	} else if (filterIds && filterIds.length === 0) {
+		// Explicit empty array means no skills (profile with no skills selected)
+		return { skillPaths: [], cleanup: () => {} };
+	} else {
+		// No filter — resolve all visible skills (default behavior)
+		result = await db.query<SkillRow>(
+			`SELECT name, format, storage_key FROM skills
+			 WHERE (scope = 'platform')
+			    OR (scope = 'team' AND owner_id = $1)
+			    OR (scope = 'user' AND owner_id = $2)
+			 ORDER BY scope, name`,
+			[teamId, userId],
+		);
+	}
 
 	if (result.rows.length === 0) {
 		return { skillPaths: [], cleanup: () => {} };

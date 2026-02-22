@@ -10,6 +10,10 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import * as readline from "node:readline";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { WebSocket } from "ws";
 import { resolvePiCommand } from "./utils/resolve-command.js";
@@ -35,6 +39,10 @@ export interface TenantBridgeOptions extends BridgeOptions {
 	crypto: CryptoService;
 	db: Database;
 	storage: StorageService;
+	/** Curated skill IDs from agent profile (undefined = all visible skills) */
+	profileSkillIds?: string[];
+	/** Agent profile ID for session metadata tracking */
+	agentProfileId?: string;
 }
 
 export class TenantBridge extends WsBridge {
@@ -45,6 +53,7 @@ export class TenantBridge extends WsBridge {
 	private db: Database;
 	private storage: StorageService;
 	private resolvedSkills: ResolvedSkills | null = null;
+	private tempSystemPromptFile: string | null = null;
 	private pendingMessages: string[] = [];
 	private ready = false;
 
@@ -89,16 +98,29 @@ export class TenantBridge extends WsBridge {
 			).catch(() => {});
 		}
 
-		// 1b. Resolve skills for this user
+		// 1b. Resolve skills for this user (filtered by profile if set)
 		try {
+			const opts = this.options as TenantBridgeOptions;
 			this.resolvedSkills = await resolveSkillsForUser(
 				this.db, this.storage, this.user.userId, this.user.teamId,
+				opts.profileSkillIds,
 			);
 			if (this.resolvedSkills.skillPaths.length > 0) {
 				console.log(`[tenant-bridge] Resolved ${this.resolvedSkills.skillPaths.length} skill(s)`);
 			}
 		} catch (err) {
 			console.error("[tenant-bridge] Failed to resolve skills:", err);
+		}
+
+		// 1c. Write system prompt to temp file if provided (pi CLI reads file paths)
+		if (this.options.systemPrompt) {
+			const promptFile = path.join(os.tmpdir(), `pi-sysprompt-${randomUUID()}.md`);
+			await fs.writeFile(promptFile, this.options.systemPrompt);
+			this.tempSystemPromptFile = promptFile;
+		} else if (this.options.appendSystemPrompt) {
+			const promptFile = path.join(os.tmpdir(), `pi-appendprompt-${randomUUID()}.md`);
+			await fs.writeFile(promptFile, this.options.appendSystemPrompt);
+			this.tempSystemPromptFile = promptFile;
 		}
 
 		// 2. Check for existing process (reconnection)
@@ -156,6 +178,15 @@ export class TenantBridge extends WsBridge {
 		if (this.options.provider) args.push("--provider", this.options.provider);
 		if (this.options.model) args.push("--model", this.options.model);
 		if (this.options.args) args.push(...this.options.args);
+
+		// Inject system prompt from agent profile
+		if (this.tempSystemPromptFile) {
+			if (this.options.systemPrompt) {
+				args.push("--system-prompt", this.tempSystemPromptFile);
+			} else if (this.options.appendSystemPrompt) {
+				args.push("--append-system-prompt", this.tempSystemPromptFile);
+			}
+		}
 
 		// Inject resolved skill paths
 		if (this.resolvedSkills) {
@@ -301,6 +332,12 @@ export class TenantBridge extends WsBridge {
 		// Clean up skill temp directories
 		this.resolvedSkills?.cleanup();
 		this.resolvedSkills = null;
+
+		// Clean up system prompt temp file
+		if (this.tempSystemPromptFile) {
+			fs.unlink(this.tempSystemPromptFile).catch(() => {});
+			this.tempSystemPromptFile = null;
+		}
 
 		console.log("[tenant-bridge] Released process to pool");
 	}

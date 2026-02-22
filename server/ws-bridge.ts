@@ -22,6 +22,10 @@ export interface BridgeOptions {
 	model?: string;
 	/** Additional CLI arguments */
 	args?: string[];
+	/** System prompt text — replaces the default pi coding-assistant prompt */
+	systemPrompt?: string;
+	/** System prompt text — appended to the default prompt instead of replacing */
+	appendSystemPrompt?: string;
 }
 
 export class WsBridge {

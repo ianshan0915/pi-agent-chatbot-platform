@@ -29,8 +29,10 @@ import "./components/FilesPanel.js";
 import "./components/OAuthConnectionsPanel.js";
 import "./components/SchedulerPanel.js";
 import "./components/TasksDashboard.js";
+import "./components/AgentProfilesPanel.js";
 import { html, render, nothing } from "lit";
 import {
+	Bot,
 	Calendar,
 	ChevronDown,
 	FileUp,
@@ -89,6 +91,21 @@ let sidebarOpen = true;
 let sidebarSessions: SessionMetadata[] = [];
 let toolsMenuOpen = false;
 let userMenuOpen = false;
+let profileMenuOpen = false;
+
+// Agent profiles state
+interface AgentProfileInfo {
+	id: string;
+	scope: string;
+	owner_id: string;
+	name: string;
+	description: string | null;
+	icon: string | null;
+	starter_message: string | null;
+	suggested_prompts: string[] | null;
+}
+let agentProfiles: AgentProfileInfo[] = [];
+let currentAgentProfileId: string | undefined;
 
 // ============================================================================
 // Storage setup (ApiStorageBackend replaces IndexedDB)
@@ -162,6 +179,7 @@ const saveSession = async () => {
 			model: state.model!,
 			thinkingLevel: state.thinkingLevel,
 			messages: state.messages,
+			agentProfileId: currentAgentProfileId || null,
 			createdAt: new Date().toISOString(),
 			lastModified: new Date().toISOString(),
 		};
@@ -183,6 +201,7 @@ const saveSession = async () => {
 			modelId: state.model?.id || null,
 			thinkingLevel: state.thinkingLevel,
 			preview: generateTitle(state.messages),
+			agentProfileId: currentAgentProfileId || null,
 		};
 
 		await storage.sessions.save(sessionData, metadata);
@@ -205,6 +224,8 @@ const loadSession = async (sessionId: string): Promise<boolean> => {
 	const metadata = await storage.sessions.getMetadata(sessionId);
 	currentSessionId = sessionId;
 	currentTitle = metadata?.title || "";
+	// Restore agent profile from session metadata
+	currentAgentProfileId = (metadata as any)?.agentProfileId || undefined;
 
 	// Load saved messages without resetting the server
 	// (Server can't restore old context, but we can show read-only history)
@@ -330,6 +351,10 @@ function setupClickOutside() {
 			toolsMenuOpen = false;
 			renderApp();
 		}
+		if (profileMenuOpen && !target.closest("[data-profile-menu]")) {
+			profileMenuOpen = false;
+			renderApp();
+		}
 		if (userMenuOpen && !target.closest("[data-user-menu]")) {
 			userMenuOpen = false;
 			renderApp();
@@ -348,6 +373,9 @@ function getWsUrl(): string {
 	let url = `${protocol}//${host}/ws?token=${encodeURIComponent(token || "")}`;
 	if (currentSessionId) {
 		url += `&sessionId=${encodeURIComponent(currentSessionId)}`;
+	}
+	if (currentAgentProfileId) {
+		url += `&agentProfileId=${encodeURIComponent(currentAgentProfileId)}`;
 	}
 	return url;
 }
@@ -505,6 +533,40 @@ async function fetchSkills(): Promise<void> {
 	} catch (err) {
 		console.error("Failed to fetch skills:", err);
 	}
+}
+
+// ============================================================================
+// Agent profiles fetching
+// ============================================================================
+
+async function fetchAgentProfiles(): Promise<void> {
+	try {
+		const res = await fetch("/api/agent-profiles", {
+			headers: { Authorization: `Bearer ${authClient.token}` },
+		});
+		if (!res.ok) return;
+		const data = await res.json();
+		const profiles = data?.data?.profiles;
+		if (data.success && Array.isArray(profiles)) {
+			agentProfiles = profiles;
+			renderApp();
+		}
+	} catch (err) {
+		console.error("Failed to fetch agent profiles:", err);
+	}
+}
+
+function selectAgentProfile(profileId: string | undefined): void {
+	profileMenuOpen = false;
+	currentAgentProfileId = profileId;
+	// Start a new session with the selected profile
+	currentSessionId = undefined;
+	currentTitle = "";
+	chatPanel?.artifactsPanel?.clear();
+	fetchedFileRefs.clear();
+	disconnectWebSocket();
+	connectWebSocket();
+	renderApp();
 }
 
 // ============================================================================
@@ -728,8 +790,81 @@ const renderApp = () => {
 						<span class="text-sm font-medium text-foreground truncate">${currentTitle || "New chat"}</span>
 					</div>
 
-					<!-- Right: tools dropdown, theme toggle, user menu -->
+					<!-- Right: agent profile selector, tools dropdown, theme toggle, user menu -->
 					<div class="flex items-center gap-1">
+						<!-- Agent profile selector -->
+						<div class="relative" data-profile-menu>
+							<button
+								class="flex items-center gap-1.5 px-2 py-1 text-sm rounded-md hover:bg-muted transition-colors cursor-pointer border border-transparent hover:border-border"
+								@click=${(e: Event) => {
+									e.stopPropagation();
+									profileMenuOpen = !profileMenuOpen;
+									toolsMenuOpen = false;
+									userMenuOpen = false;
+									renderApp();
+								}}
+							>
+								${(() => {
+									const current = agentProfiles.find(p => p.id === currentAgentProfileId);
+									return current
+										? html`<span>${current.icon || ""}${!current.icon ? icon(Bot, "sm") : nothing}</span><span class="max-w-[120px] truncate">${current.name}</span>`
+										: html`${icon(Bot, "sm")}<span>Default</span>`;
+								})()}
+								${icon(ChevronDown, "sm")}
+							</button>
+							${profileMenuOpen ? html`
+								<div class="absolute right-0 top-full mt-1 w-72 bg-background border border-border rounded-md shadow-lg py-1 z-50 max-h-80 overflow-y-auto">
+									<!-- Default agent -->
+									<button
+										class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer ${!currentAgentProfileId ? "bg-muted/60 font-medium" : ""}"
+										@click=${() => selectAgentProfile(undefined)}
+									>
+										${icon(Bot, "sm")}
+										<div class="flex-1 min-w-0">
+											<div class="truncate">Default Agent</div>
+											<div class="text-xs text-muted-foreground truncate">All skills, default prompt</div>
+										</div>
+									</button>
+									${agentProfiles.length > 0 ? html`
+										<div class="border-t border-border my-1"></div>
+										${agentProfiles.map(p => html`
+											<button
+												class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer ${currentAgentProfileId === p.id ? "bg-muted/60 font-medium" : ""}"
+												@click=${() => selectAgentProfile(p.id)}
+											>
+												<span class="shrink-0">${p.icon || ""}${!p.icon ? icon(Bot, "sm") : nothing}</span>
+												<div class="flex-1 min-w-0">
+													<div class="truncate">${p.name}</div>
+													${p.description ? html`<div class="text-xs text-muted-foreground truncate">${p.description}</div>` : nothing}
+												</div>
+												<span class="text-xs text-muted-foreground shrink-0">${p.scope}</span>
+											</button>
+										`)}
+									` : nothing}
+									<div class="border-t border-border my-1"></div>
+									<button
+										class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer"
+										@click=${() => {
+											profileMenuOpen = false;
+											openDialog({
+												title: "Agent Profiles",
+												tag: "agent-profiles-panel",
+												style: "max-width: 700px; width: 90vw; padding: 1.5rem; border: 1px solid var(--border); border-radius: 0.5rem; background: var(--background);",
+												setup: (panel) => {
+													panel.getToken = () => authClient.token;
+													panel.userRole = user?.role || "member";
+													panel.onProfilesChanged = () => fetchAgentProfiles();
+												},
+											});
+											renderApp();
+										}}
+									>
+										${icon(Settings, "sm")}
+										<span>Manage Profiles...</span>
+									</button>
+								</div>
+							` : nothing}
+						</div>
 						<!-- Tools dropdown -->
 						<div class="relative" data-tools-menu>
 							${Button({
@@ -897,6 +1032,7 @@ function onAuthSuccess() {
 	chatPanel = new ChatPanel();
 	connectWebSocket();
 	fetchSkills();
+	fetchAgentProfiles();
 	loadSidebarSessions();
 	renderApp();
 }
@@ -907,6 +1043,8 @@ function handleLogout() {
 	sidebarSessions = [];
 	currentSessionId = undefined;
 	currentTitle = "";
+	currentAgentProfileId = undefined;
+	agentProfiles = [];
 	authClient.logout();
 	renderApp();
 }
@@ -929,6 +1067,7 @@ async function initApp() {
 			chatPanel = new ChatPanel();
 			connectWebSocket();
 			fetchSkills();
+			fetchAgentProfiles();
 			loadSidebarSessions();
 		} else {
 			// Token expired/invalid — show login

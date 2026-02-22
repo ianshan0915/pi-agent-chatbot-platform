@@ -67,14 +67,14 @@ router.get("/", asyncRoute(async (req, res) => {
 // ---------------------------------------------------------------------------
 router.post("/", asyncRoute(async (req, res) => {
 	const db = getDatabase();
-	const { id, title, modelId, provider, thinkingLevel } = req.body;
+	const { id, title, modelId, provider, thinkingLevel, agentProfileId } = req.body;
 	// Use client-provided ID if present, otherwise generate one
 	const sessionId = id || randomUUID();
 	const now = new Date();
 
 	const result = await db.query<SessionRow>(
-		`INSERT INTO sessions (id, user_id, title, model_id, provider, thinking_level, message_count, preview, created_at, last_modified)
-		 VALUES ($1, $2, $3, $4, $5, $6, 0, '', $7, $7)
+		`INSERT INTO sessions (id, user_id, title, model_id, provider, thinking_level, message_count, preview, agent_profile_id, created_at, last_modified)
+		 VALUES ($1, $2, $3, $4, $5, $6, 0, '', $7, $8, $8)
 		 RETURNING *`,
 		[
 			sessionId,
@@ -83,6 +83,7 @@ router.post("/", asyncRoute(async (req, res) => {
 			modelId ?? null,
 			provider ?? null,
 			thinkingLevel ?? "default",
+			agentProfileId ?? null,
 			now,
 		],
 	);

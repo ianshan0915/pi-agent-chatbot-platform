@@ -43,6 +43,7 @@ export interface SessionRow {
 	thinking_level: string;
 	message_count: number;
 	preview: string;
+	agent_profile_id: string | null;
 	deleted_at: Date | null;
 	created_at: Date;
 	last_modified: Date;
@@ -163,4 +164,23 @@ export interface TaskArtifactRow {
 	size_bytes: number | null;
 	storage_key: string;
 	created_at: Date;
+}
+
+export interface AgentProfileRow {
+	id: string;
+	scope: "platform" | "team" | "user";
+	owner_id: string;
+	name: string;
+	description: string | null;
+	icon: string | null;
+	system_prompt: string;
+	prompt_mode: "replace" | "append";
+	skill_ids: string[] | null;
+	model_id: string | null;
+	provider: string | null;
+	starter_message: string | null;
+	suggested_prompts: string[] | null;
+	use_count: number;
+	created_at: Date;
+	updated_at: Date;
 }

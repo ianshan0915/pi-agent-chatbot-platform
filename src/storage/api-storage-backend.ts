@@ -81,6 +81,7 @@ export class ApiStorageBackend implements StorageBackend {
 						modelId: s.model_id,
 						provider: s.provider,
 						thinkingLevel: s.thinking_level,
+						agentProfileId: s.agent_profile_id ?? null,
 					});
 				}
 			}
@@ -364,6 +365,7 @@ export class ApiStorageBackend implements StorageBackend {
 						modelId: data.modelId,
 						provider: data.provider,
 						thinkingLevel: data.thinkingLevel,
+						agentProfileId: data.agentProfileId ?? null,
 					}),
 				})
 					.then(() => {
