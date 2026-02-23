@@ -21,6 +21,7 @@ import type { CryptoService } from "./services/crypto.js";
 import type { ProcessPool } from "./services/process-pool.js";
 import type { StorageService } from "./services/storage.js";
 import { resolveSkillsForUser, type ResolvedSkills } from "./services/skill-resolver.js";
+import { resolveFilesForUser, type ResolvedFiles } from "./services/file-resolver.js";
 import { AgentExecutor } from "./services/agent-executor.js";
 import type { Database } from "./db/types.js";
 import { WsBridge, type BridgeOptions } from "./ws-bridge.js";
@@ -41,6 +42,8 @@ export interface TenantBridgeOptions extends BridgeOptions {
 	storage: StorageService;
 	/** Curated skill IDs from agent profile (undefined = all visible skills) */
 	profileSkillIds?: string[];
+	/** File IDs from agent profile to inject via --file args */
+	profileFileIds?: string[];
 	/** Agent profile ID for session metadata tracking */
 	agentProfileId?: string;
 }
@@ -53,6 +56,7 @@ export class TenantBridge extends WsBridge {
 	private db: Database;
 	private storage: StorageService;
 	private resolvedSkills: ResolvedSkills | null = null;
+	private resolvedFiles: ResolvedFiles | null = null;
 	private tempSystemPromptFile: string | null = null;
 	private pendingMessages: string[] = [];
 	private ready = false;
@@ -110,6 +114,22 @@ export class TenantBridge extends WsBridge {
 			}
 		} catch (err) {
 			console.error("[tenant-bridge] Failed to resolve skills:", err);
+		}
+
+		// 1b2. Resolve files from agent profile
+		try {
+			const opts = this.options as TenantBridgeOptions;
+			if (opts.profileFileIds && opts.profileFileIds.length > 0) {
+				this.resolvedFiles = await resolveFilesForUser(
+					this.db, this.storage, this.user.userId,
+					opts.profileFileIds,
+				);
+				if (this.resolvedFiles.filePaths.length > 0) {
+					console.log(`[tenant-bridge] Resolved ${this.resolvedFiles.filePaths.length} file(s)`);
+				}
+			}
+		} catch (err) {
+			console.error("[tenant-bridge] Failed to resolve files:", err);
 		}
 
 		// 1c. Write system prompt to temp file if provided (pi CLI reads file paths)
@@ -192,6 +212,13 @@ export class TenantBridge extends WsBridge {
 		if (this.resolvedSkills) {
 			for (const skillPath of this.resolvedSkills.skillPaths) {
 				args.push("--skill", skillPath);
+			}
+		}
+
+		// Inject resolved file paths
+		if (this.resolvedFiles) {
+			for (const filePath of this.resolvedFiles.filePaths) {
+				args.push("--file", filePath);
 			}
 		}
 
@@ -332,6 +359,10 @@ export class TenantBridge extends WsBridge {
 		// Clean up skill temp directories
 		this.resolvedSkills?.cleanup();
 		this.resolvedSkills = null;
+
+		// Clean up file temp directories
+		this.resolvedFiles?.cleanup();
+		this.resolvedFiles = null;
 
 		// Clean up system prompt temp file
 		if (this.tempSystemPromptFile) {

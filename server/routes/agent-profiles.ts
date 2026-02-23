@@ -61,7 +61,7 @@ export function createAgentProfilesRouter(): Router {
 		const {
 			scope, name, description, icon,
 			system_prompt, prompt_mode,
-			skill_ids, model_id, provider,
+			skill_ids, file_ids, model_id, provider,
 			starter_message, suggested_prompts,
 		} = req.body;
 
@@ -95,9 +95,10 @@ export function createAgentProfilesRouter(): Router {
 			return;
 		}
 
+		const db = getDatabase();
+
 		// Validate skill_ids if provided
 		if (skill_ids && Array.isArray(skill_ids) && skill_ids.length > 0) {
-			const db = getDatabase();
 			const skillCheck = await db.query(
 				`SELECT id FROM skills
 				 WHERE id = ANY($1)
@@ -112,21 +113,32 @@ export function createAgentProfilesRouter(): Router {
 			}
 		}
 
+		// Validate file_ids if provided
+		if (file_ids && Array.isArray(file_ids) && file_ids.length > 0) {
+			const fileCheck = await db.query(
+				`SELECT id FROM user_files WHERE id = ANY($1) AND user_id = $2`,
+				[file_ids, req.user!.userId],
+			);
+			if (fileCheck.rows.length !== file_ids.length) {
+				res.status(400).json({ success: false, error: "Some file_ids are invalid or not accessible" });
+				return;
+			}
+		}
+
 		const ownerId = scope === "user" ? req.user!.userId : req.user!.teamId;
-		const db = getDatabase();
 
 		const result = await db.query<AgentProfileRow>(
 			`INSERT INTO agent_profiles (
 				scope, owner_id, name, description, icon,
 				system_prompt, prompt_mode,
-				skill_ids, model_id, provider,
+				skill_ids, file_ids, model_id, provider,
 				starter_message, suggested_prompts
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 			RETURNING *`,
 			[
 				scope, ownerId, name, description || null, icon || null,
 				system_prompt, prompt_mode || "replace",
-				skill_ids || null, model_id || null, provider || null,
+				skill_ids || null, file_ids || null, model_id || null, provider || null,
 				starter_message || null, suggested_prompts || null,
 			],
 		);
@@ -164,7 +176,7 @@ export function createAgentProfilesRouter(): Router {
 		const {
 			name, description, icon,
 			system_prompt, prompt_mode,
-			skill_ids, model_id, provider,
+			skill_ids, file_ids, model_id, provider,
 			starter_message, suggested_prompts,
 		} = req.body;
 
@@ -202,6 +214,18 @@ export function createAgentProfilesRouter(): Router {
 			}
 		}
 
+		// Validate file_ids if provided
+		if (file_ids && Array.isArray(file_ids) && file_ids.length > 0) {
+			const fileCheck = await db.query(
+				`SELECT id FROM user_files WHERE id = ANY($1) AND user_id = $2`,
+				[file_ids, req.user!.userId],
+			);
+			if (fileCheck.rows.length !== file_ids.length) {
+				res.status(400).json({ success: false, error: "Some file_ids are invalid or not accessible" });
+				return;
+			}
+		}
+
 		const result = await db.query<AgentProfileRow>(
 			`UPDATE agent_profiles SET
 				name = COALESCE($1, name),
@@ -210,12 +234,13 @@ export function createAgentProfilesRouter(): Router {
 				system_prompt = COALESCE($4, system_prompt),
 				prompt_mode = COALESCE($5, prompt_mode),
 				skill_ids = $6,
-				model_id = $7,
-				provider = $8,
-				starter_message = $9,
-				suggested_prompts = $10,
+				file_ids = $7,
+				model_id = $8,
+				provider = $9,
+				starter_message = $10,
+				suggested_prompts = $11,
 				updated_at = now()
-			WHERE id = $11
+			WHERE id = $12
 			RETURNING *`,
 			[
 				name ?? null,
@@ -224,6 +249,7 @@ export function createAgentProfilesRouter(): Router {
 				system_prompt ?? null,
 				prompt_mode ?? null,
 				skill_ids !== undefined ? skill_ids : profile.skill_ids,
+				file_ids !== undefined ? file_ids : profile.file_ids,
 				model_id !== undefined ? model_id : profile.model_id,
 				provider !== undefined ? provider : profile.provider,
 				starter_message !== undefined ? starter_message : profile.starter_message,

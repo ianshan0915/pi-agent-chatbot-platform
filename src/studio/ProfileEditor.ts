@@ -5,7 +5,7 @@
 
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { ProfileInfo, SkillInfo, ProfileFormData } from "./types.js";
+import type { ProfileInfo, SkillInfo, FileInfo, ProfileFormData } from "./types.js";
 import { EMPTY_FORM } from "./types.js";
 
 @customElement("profile-editor")
@@ -153,6 +153,9 @@ export class ProfileEditor extends LitElement {
 	@property({ type: Array })
 	availableSkills: SkillInfo[] = [];
 
+	@property({ type: Array })
+	availableFiles: FileInfo[] = [];
+
 	@state() private form: ProfileFormData = { ...EMPTY_FORM };
 	@state() private saving = false;
 	@state() private statusMessage = "";
@@ -174,6 +177,7 @@ export class ProfileEditor extends LitElement {
 				system_prompt: this.profile.system_prompt,
 				prompt_mode: this.profile.prompt_mode,
 				skill_ids: this.profile.skill_ids || [],
+				file_ids: this.profile.file_ids || [],
 				model_id: this.profile.model_id || "",
 				provider: this.profile.provider || "",
 				starter_message: this.profile.starter_message || "",
@@ -227,6 +231,13 @@ export class ProfileEditor extends LitElement {
 		this._updateForm({ skill_ids: [...ids] });
 	}
 
+	private _toggleFile(fileId: string) {
+		const ids = new Set(this.form.file_ids);
+		if (ids.has(fileId)) ids.delete(fileId);
+		else ids.add(fileId);
+		this._updateForm({ file_ids: [...ids] });
+	}
+
 	private _updateSuggestedPrompts(value: string) {
 		const prompts = value.split("\n").map(s => s.trim()).filter(Boolean);
 		this._updateForm({ suggested_prompts: prompts });
@@ -259,6 +270,7 @@ export class ProfileEditor extends LitElement {
 			const body = {
 				...this.form,
 				skill_ids: this.form.skill_ids.length > 0 ? this.form.skill_ids : null,
+				file_ids: this.form.file_ids.length > 0 ? this.form.file_ids : null,
 				model_id: this.form.model_id || null,
 				provider: this.form.provider || null,
 				description: this.form.description || null,
@@ -427,6 +439,25 @@ export class ProfileEditor extends LitElement {
 									/>
 									<span>${skill.name}</span>
 									<span class="skill-scope">(${skill.scope})</span>
+								</label>
+							`)}
+						</div>
+					</div>
+				` : nothing}
+
+				<!-- Files -->
+				${this.availableFiles.length > 0 ? html`
+					<div class="form-field">
+						<label>Files (select files to load into the agent session)</label>
+						<div class="skill-checkboxes">
+							${this.availableFiles.map(file => html`
+								<label class="skill-checkbox">
+									<input
+										type="checkbox"
+										.checked=${this.form.file_ids.includes(file.id)}
+										@change=${() => this._toggleFile(file.id)}
+									/>
+									<span>${file.filename}</span>
 								</label>
 							`)}
 						</div>

@@ -193,6 +193,7 @@ export class ProfileCard extends LitElement {
 				<div class="card-meta">
 					${p.model_id ? html`<span class="meta-item">${p.model_id}</span>` : nothing}
 					${skillNames.length > 0 ? html`<span class="meta-item">${skillNames.length} skill${skillNames.length > 1 ? "s" : ""}</span>` : nothing}
+					${p.file_ids && p.file_ids.length > 0 ? html`<span class="meta-item">${p.file_ids.length} file${p.file_ids.length > 1 ? "s" : ""}</span>` : nothing}
 					<span class="meta-item">${p.use_count} use${p.use_count !== 1 ? "s" : ""}</span>
 				</div>
 				${this.showActions ? html`

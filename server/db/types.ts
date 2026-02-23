@@ -176,6 +176,7 @@ export interface AgentProfileRow {
 	system_prompt: string;
 	prompt_mode: "replace" | "append";
 	skill_ids: string[] | null;
+	file_ids: string[] | null;
 	model_id: string | null;
 	provider: string | null;
 	starter_message: string | null;

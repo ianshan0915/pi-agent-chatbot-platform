@@ -5,7 +5,7 @@
 
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { ProfileFormData, SkillInfo } from "./types.js";
+import type { ProfileFormData, SkillInfo, FileInfo } from "./types.js";
 
 @customElement("profile-preview")
 export class ProfilePreview extends LitElement {
@@ -132,6 +132,9 @@ export class ProfilePreview extends LitElement {
 	@property({ type: Array })
 	availableSkills: SkillInfo[] = [];
 
+	@property({ type: Array })
+	availableFiles: FileInfo[] = [];
+
 	override render() {
 		const f = this.form;
 		if (!f) return html`<div class="preview"><div class="empty-state">No profile data</div></div>`;
@@ -139,6 +142,9 @@ export class ProfilePreview extends LitElement {
 		const hasContent = f.name || f.starter_message || f.suggested_prompts.length > 0;
 		const selectedSkills = f.skill_ids.length > 0
 			? this.availableSkills.filter(s => f.skill_ids.includes(s.id))
+			: [];
+		const selectedFiles = f.file_ids.length > 0
+			? this.availableFiles.filter(fi => f.file_ids.includes(fi.id))
 			: [];
 
 		return html`
@@ -194,6 +200,14 @@ export class ProfilePreview extends LitElement {
 									<span class="info-label">Skills</span>
 									<span class="info-value">
 										${selectedSkills.map(s => html`<span class="skill-tag">${s.name}</span> `)}
+									</span>
+								</div>
+							` : nothing}
+							${selectedFiles.length > 0 ? html`
+								<div class="info-row">
+									<span class="info-label">Files</span>
+									<span class="info-value">
+										${selectedFiles.map(fi => html`<span class="skill-tag">${fi.filename}</span> `)}
 									</span>
 								</div>
 							` : nothing}

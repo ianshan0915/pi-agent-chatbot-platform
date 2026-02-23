@@ -5,7 +5,7 @@
 
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { ProfileInfo, SkillInfo, ProfileFormData } from "./types.js";
+import type { ProfileInfo, SkillInfo, FileInfo, ProfileFormData } from "./types.js";
 import { EMPTY_FORM } from "./types.js";
 import { navigateTo } from "../router.js";
 import "./ProfileCard.js";
@@ -257,6 +257,7 @@ export class StudioPage extends LitElement {
 
 	@state() private profiles: ProfileInfo[] = [];
 	@state() private availableSkills: SkillInfo[] = [];
+	@state() private availableFiles: FileInfo[] = [];
 	@state() private loading = false;
 	@state() private viewMode: ViewMode = "browse";
 	@state() private editingProfile: ProfileInfo | null = null;
@@ -291,12 +292,14 @@ export class StudioPage extends LitElement {
 	private async _loadData() {
 		this.loading = true;
 		try {
-			const [profilesRes, skillsRes] = await Promise.all([
+			const [profilesRes, skillsRes, filesRes] = await Promise.all([
 				this._fetchApi("/api/agent-profiles"),
 				this._fetchApi("/api/skills"),
+				this._fetchApi("/api/files"),
 			]);
 			if (profilesRes.success) this.profiles = profilesRes.data.profiles;
 			if (skillsRes.success) this.availableSkills = skillsRes.data.skills;
+			if (filesRes.success) this.availableFiles = filesRes.data.files;
 		} catch (err) {
 			console.error("Failed to load studio data:", err);
 		} finally {
@@ -326,6 +329,7 @@ export class StudioPage extends LitElement {
 			system_prompt: profile.system_prompt,
 			prompt_mode: profile.prompt_mode,
 			skill_ids: profile.skill_ids || [],
+			file_ids: profile.file_ids || [],
 			model_id: profile.model_id || "",
 			provider: profile.provider || "",
 			starter_message: profile.starter_message || "",
@@ -507,6 +511,7 @@ export class StudioPage extends LitElement {
 						.getToken=${this.getToken}
 						.userRole=${this.userRole}
 						.availableSkills=${this.availableSkills}
+						.availableFiles=${this.availableFiles}
 						@save=${() => this._onSave()}
 						@cancel=${() => this._backToBrowse()}
 						@preview-change=${(e: CustomEvent) => { this.previewForm = e.detail.form; }}
@@ -516,6 +521,7 @@ export class StudioPage extends LitElement {
 					<profile-preview
 						.form=${this.previewForm}
 						.availableSkills=${this.availableSkills}
+						.availableFiles=${this.availableFiles}
 					></profile-preview>
 				</div>
 			</div>

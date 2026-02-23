@@ -154,6 +154,7 @@ async function main() {
 		// Resolve agent profile if specified
 		const agentProfileId = url.searchParams.get("agentProfileId") || undefined;
 		let profileSkillIds: string[] | undefined;
+		let profileFileIds: string[] | undefined;
 
 		if (agentProfileId) {
 			try {
@@ -176,6 +177,7 @@ async function main() {
 						options.systemPrompt = profile.system_prompt;
 					}
 					profileSkillIds = profile.skill_ids ?? undefined;
+					profileFileIds = profile.file_ids ?? undefined;
 					// Increment use count (fire-and-forget)
 					db.query(
 						`UPDATE agent_profiles SET use_count = use_count + 1 WHERE id = $1`,
@@ -205,6 +207,7 @@ async function main() {
 			db,
 			storage: storageService,
 			profileSkillIds,
+			profileFileIds,
 			agentProfileId,
 		};
 
