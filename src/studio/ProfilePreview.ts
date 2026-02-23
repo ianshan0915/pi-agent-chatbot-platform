@@ -6,6 +6,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { ProfileFormData, SkillInfo, FileInfo } from "./types.js";
+import { getModelLabel } from "../shared/model-labels.js";
 
 @customElement("profile-preview")
 export class ProfilePreview extends LitElement {
@@ -192,7 +193,7 @@ export class ProfilePreview extends LitElement {
 							${f.model_id ? html`
 								<div class="info-row">
 									<span class="info-label">Model</span>
-									<span class="info-value">${f.model_id}</span>
+									<span class="info-value">${getModelLabel(f.model_id)}</span>
 								</div>
 							` : nothing}
 							${selectedSkills.length > 0 ? html`

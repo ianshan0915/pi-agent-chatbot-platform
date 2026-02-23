@@ -12,6 +12,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ProfileInfo, SkillInfo, ProfileFormData } from "../studio/types.js";
 import { EMPTY_FORM } from "../studio/types.js";
+import { navigateTo } from "../router.js";
 import "../studio/ProfileCard.js";
 import "../studio/ProfileEditor.js";
 
@@ -229,7 +230,12 @@ export class AgentProfilesPanel extends LitElement {
 			<div class="container">
 				<div class="header-row">
 					<h3>Agent Profiles</h3>
-					<button class="btn-primary" @click=${() => this.openNewForm()}>+ New Profile</button>
+					<button class="btn-primary" @click=${() => {
+						// Navigate to Studio Quick Create flow
+						navigateTo("/studio");
+						// Close parent dialog if we're in one
+						this.closest("dialog")?.close();
+					}}>+ New Profile</button>
 				</div>
 
 				${this.statusMessage
@@ -239,7 +245,11 @@ export class AgentProfilesPanel extends LitElement {
 				${this.loading
 					? html`<div class="empty">Loading...</div>`
 					: this.profiles.length === 0
-						? html`<div class="empty">No agent profiles yet. Create one to get started.</div>`
+						? html`<div class="empty">
+							<div style="font-size: 1.5rem; margin-bottom: 0.5rem;">🤖</div>
+							<div style="font-weight: 600; margin-bottom: 0.25rem;">No agent profiles yet</div>
+							<div>Create specialist AI agents with custom instructions and tools. Each profile is a pre-configured AI assistant tailored for specific tasks.</div>
+						</div>`
 						: html`
 							${renderSection("Platform", platformProfiles)}
 							${renderSection("Team", teamProfiles)}

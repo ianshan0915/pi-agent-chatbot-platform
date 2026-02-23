@@ -79,6 +79,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let reconnectDelay = 1000; // Exponential backoff: 1s → 2s → 4s → ... → 30s max
 const MAX_RECONNECT_DELAY = 30_000;
 let saveSessionTimer: ReturnType<typeof setTimeout> | undefined;
+let intentionalDisconnect = false; // Suppress reconnect on intentional disconnect
 
 // Cache tool call arguments for detecting renderable file writes
 const pendingToolArgs = new Map<string, { toolName: string; args: any }>();
@@ -469,6 +470,12 @@ async function onWebSocketOpen(): Promise<void> {
 function onWebSocketClose(event: CloseEvent): void {
 	console.log(`[ws] Disconnected (code=${event.code}, reason=${event.reason})`);
 
+	// If this close was triggered by intentional disconnect (profile switch, etc.),
+	// skip session save and reconnect — the caller handles the next connection.
+	if (intentionalDisconnect) {
+		return;
+	}
+
 	clearTimeout(saveSessionTimer);
 	if (currentSessionId && remoteAgent) {
 		saveSession();
@@ -507,16 +514,21 @@ function connectWebSocket(): void {
 function disconnectWebSocket(): void {
 	clearTimeout(reconnectTimer);
 	clearTimeout(saveSessionTimer);
+	intentionalDisconnect = true;
 	if (ws) {
+		ws.removeEventListener("open", onWebSocketOpen);
+		ws.removeEventListener("close", onWebSocketClose);
 		ws.close();
 		ws = null;
 	}
 	wsConnected = false;
+	reconnectDelay = 1000;
 	remoteAgent = null;
 	if (agentUnsubscribe) {
 		agentUnsubscribe();
 		agentUnsubscribe = undefined;
 	}
+	intentionalDisconnect = false;
 }
 
 // ============================================================================
@@ -565,13 +577,24 @@ async function fetchAgentProfiles(): Promise<void> {
 
 function selectAgentProfile(profileId: string | undefined): void {
 	profileMenuOpen = false;
+
+	// Save current session before switching (if there's anything to save)
+	clearTimeout(saveSessionTimer);
+	if (currentSessionId && remoteAgent) {
+		saveSession();
+	}
+
+	// Disconnect old WebSocket cleanly (listeners removed, no stale reconnects)
+	disconnectWebSocket();
+
+	// Now clear state for the new profile session
 	currentAgentProfileId = profileId;
-	// Start a new session with the selected profile
 	currentSessionId = undefined;
 	currentTitle = "";
+	welcomeDismissed = false;
 	chatPanel?.artifactsPanel?.clear();
 	fetchedFileRefs.clear();
-	disconnectWebSocket();
+
 	connectWebSocket();
 	renderApp();
 }
@@ -689,6 +712,87 @@ function scanMessageForFileReferences(msg: AgentMessage) {
 }
 
 // ============================================================================
+// Welcome screen
+// ============================================================================
+
+const DEFAULT_STARTER_PROMPTS = [
+	"Draft a professional email",
+	"Summarize a document",
+	"Analyze data from a spreadsheet",
+	"Create a report outline",
+	"Help me brainstorm ideas",
+	"Explain a complex topic simply",
+];
+
+let welcomeDismissed = false;
+
+function sendStarterPrompt(prompt: string) {
+	if (!remoteAgent || !chatPanel) return;
+	// Dismiss welcome screen immediately so user sees the chat panel
+	welcomeDismissed = true;
+	// Send the prompt as a user message
+	const agentIface = chatPanel.agentInterface;
+	if (agentIface && typeof agentIface.sendMessage === "function") {
+		agentIface.sendMessage(prompt);
+	}
+	renderApp();
+}
+
+function renderChatOrWelcome() {
+	// If we have messages, a session, or the user already interacted — show chat
+	const messages = remoteAgent?.state?.messages || [];
+	if (welcomeDismissed || messages.length > 0 || currentSessionId) {
+		return chatPanel;
+	}
+
+	// Check if a profile is selected and has its own prompts
+	const currentProfile = agentProfiles.find(p => p.id === currentAgentProfileId);
+	const profilePrompts = currentProfile?.suggested_prompts;
+	const starterPrompts = profilePrompts && profilePrompts.length > 0 ? profilePrompts : DEFAULT_STARTER_PROMPTS;
+
+	const profileName = currentProfile?.name || "AI Assistant";
+	const profileIcon = currentProfile?.icon || "";
+	const profileDescription = currentProfile?.description || "Ask me anything or try one of the suggestions below.";
+
+	return html`
+		<div class="flex-1 flex flex-col items-center justify-center px-4 pb-16">
+			<!-- Welcome card -->
+			<div class="flex flex-col items-center gap-4 max-w-lg w-full text-center">
+				${profileIcon ? html`<span class="text-4xl">${profileIcon}</span>` : html`
+					<div class="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+						${icon(Bot, "md")}
+					</div>
+				`}
+				<div>
+					<h2 class="text-lg font-semibold text-foreground mb-1">${profileName}</h2>
+					<p class="text-sm text-muted-foreground">${profileDescription}</p>
+				</div>
+
+				<!-- Starter prompts grid -->
+				<div class="grid grid-cols-2 gap-2 w-full mt-2">
+					${starterPrompts.slice(0, 6).map(prompt => html`
+						<button
+							class="text-left px-3 py-2.5 rounded-lg border border-border bg-background hover:bg-muted transition-colors cursor-pointer text-sm text-foreground"
+							@click=${() => sendStarterPrompt(prompt)}
+						>
+							${prompt}
+						</button>
+					`)}
+				</div>
+
+				${!currentAgentProfileId && agentProfiles.length > 0 ? html`
+					<p class="text-xs text-muted-foreground mt-2">
+						Switch to a specialist AI using the profile selector above
+					</p>
+				` : nothing}
+			</div>
+		</div>
+		<!-- Still render the chat panel (hidden behind welcome) so it's ready -->
+		<div style="display:none">${chatPanel}</div>
+	`;
+}
+
+// ============================================================================
 // Render
 // ============================================================================
 
@@ -758,6 +862,7 @@ const renderApp = () => {
 								if (remoteAgent) {
 									currentSessionId = undefined;
 									currentTitle = "";
+									welcomeDismissed = false;
 									chatPanel?.artifactsPanel?.clear();
 									fetchedFileRefs.clear();
 									await remoteAgent.newSession();
@@ -823,13 +928,13 @@ const renderApp = () => {
 
 					<!-- Right: studio link, agent profile selector, tools dropdown, theme toggle, user menu -->
 					<div class="flex items-center gap-1">
-						<!-- Studio link -->
+						<!-- Agent Builder link -->
 						<button
 							class="flex items-center gap-1.5 px-2 py-1 text-sm rounded-md hover:bg-muted transition-colors cursor-pointer border border-transparent hover:border-border text-muted-foreground hover:text-foreground"
 							@click=${() => navigateTo("/studio")}
 						>
 							${icon(Bot, "sm")}
-							<span>Studio</span>
+							<span>Agent Builder</span>
 						</button>
 						<!-- Agent profile selector -->
 						<div class="relative" data-profile-menu>
@@ -904,7 +1009,7 @@ const renderApp = () => {
 										}}
 									>
 										${icon(Settings, "sm")}
-										<span>Manage in Studio...</span>
+										<span>Manage in Agent Builder...</span>
 									</button>
 								</div>
 							` : nothing}
@@ -935,7 +1040,7 @@ const renderApp = () => {
 										renderApp();
 									}}>
 										${icon(Puzzle, "sm")}
-										<span>Skills</span>
+										<span>Agent Tools</span>
 									</button>
 									<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer" @click=${() => {
 										toolsMenuOpen = false;
@@ -952,14 +1057,14 @@ const renderApp = () => {
 									<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer" @click=${() => {
 										toolsMenuOpen = false;
 										openDialog({
-											title: "OAuth Subscriptions",
+											title: "Your AI Subscriptions",
 											tag: "oauth-connections-panel",
 											setup: (panel) => { panel.getToken = () => authClient.token; },
 										});
 										renderApp();
 									}}>
 										${icon(Link, "sm")}
-										<span>OAuth Subscriptions</span>
+										<span>Your AI Subscriptions</span>
 									</button>
 									${user?.role === "admin" ? html`
 										<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer" @click=${() => {
@@ -1055,9 +1160,16 @@ const renderApp = () => {
 				${
 					!wsConnected
 						? html`<div class="flex-1 flex items-center justify-center">
-							<div class="text-muted-foreground text-sm">Connecting...</div>
+							<div class="flex flex-col items-center gap-2">
+								<div class="flex items-center gap-1 text-muted-foreground text-sm">
+									<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+									<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" style="animation-delay: 0.2s"></span>
+									<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" style="animation-delay: 0.4s"></span>
+								</div>
+								<span class="text-muted-foreground text-sm">Setting up your AI assistant...</span>
+							</div>
 						</div>`
-						: chatPanel
+						: renderChatOrWelcome()
 				}
 			</div>
 		</div>

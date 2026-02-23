@@ -270,7 +270,11 @@ export class FilesPanel extends LitElement {
 			${this.loading
 				? html`<div class="empty">Loading...</div>`
 				: this.files.length === 0
-					? html`<div class="empty">No files uploaded yet.</div>`
+					? html`<div class="empty">
+						<div style="font-size: 1.5rem; margin-bottom: 0.5rem;">📁</div>
+						<div style="font-weight: 600; margin-bottom: 0.25rem;">No files uploaded yet</div>
+						<div>Upload documents, spreadsheets, or other files to use them with your AI assistant. Files are available across all your conversations.</div>
+					</div>`
 					: html`
 						<div class="file-list">
 							${this.files.map(

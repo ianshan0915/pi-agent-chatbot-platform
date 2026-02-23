@@ -14,6 +14,7 @@ import type { SkillRow } from "../db/types.js";
 import { requireAuth } from "../auth/middleware.js";
 import type { StorageService } from "../services/storage.js";
 import { asyncRoute } from "../utils/async-handler.js";
+import { contentDisposition } from "../utils/sanitize-filename.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } }); // 25MB max
 
@@ -327,12 +328,12 @@ export function createSkillsRouter(storage: StorageService): Router {
 
 			const zipBuffer = await zip.generateAsync({ type: "nodebuffer" });
 			res.setHeader("Content-Type", "application/zip");
-			res.setHeader("Content-Disposition", `attachment; filename="${skill.name}.zip"`);
+			res.setHeader("Content-Disposition", contentDisposition(`${skill.name}.zip`));
 			res.send(zipBuffer);
 		} else {
 			const data = await storage.download(skill.storage_key);
 			res.setHeader("Content-Type", "text/markdown");
-			res.setHeader("Content-Disposition", `attachment; filename="SKILL.md"`);
+			res.setHeader("Content-Disposition", contentDisposition("SKILL.md"));
 			res.send(data);
 		}
 	}));

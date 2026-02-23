@@ -24,6 +24,15 @@ const ICON_GEN_CANDIDATES: { provider: string; envVar: string; modelId: string }
 	{ provider: "xai", envVar: "XAI_API_KEY", modelId: "grok-4-fast-non-reasoning" },
 ];
 
+/** Mid-tier models for full profile generation (needs structured JSON output). */
+const PROFILE_GEN_CANDIDATES: { provider: string; envVar: string; modelId: string }[] = [
+	{ provider: "anthropic", envVar: "ANTHROPIC_API_KEY", modelId: "claude-sonnet-4-20250514" },
+	{ provider: "openai", envVar: "OPENAI_API_KEY", modelId: "gpt-4o" },
+	{ provider: "google", envVar: "GEMINI_API_KEY", modelId: "gemini-2.5-flash" },
+	{ provider: "groq", envVar: "GROQ_API_KEY", modelId: "openai/gpt-oss-20b" },
+	{ provider: "xai", envVar: "XAI_API_KEY", modelId: "grok-4-fast-non-reasoning" },
+];
+
 export function createAgentProfilesRouter(agentExecutor: AgentExecutor): Router {
 	const router = Router();
 	router.use(requireAuth);
@@ -96,6 +105,127 @@ export function createAgentProfilesRouter(agentExecutor: AgentExecutor): Router 
 		} catch (err) {
 			console.error("[agent-profiles] Failed to generate icon:", err);
 			res.json({ success: true, data: { icon: DEFAULT_ICON } });
+		}
+	}));
+
+	// -----------------------------------------------------------------------
+	// POST /generate — AI-generate a full profile from name + description
+	// -----------------------------------------------------------------------
+	router.post("/generate", asyncRoute(async (req, res) => {
+		const { name, description, available_skills, available_files } = req.body;
+		if (!name || typeof name !== "string") {
+			res.status(400).json({ success: false, error: "name is required" });
+			return;
+		}
+
+		const emptyResult = {
+			icon: DEFAULT_ICON,
+			system_prompt: "",
+			starter_message: "",
+			suggested_prompts: [],
+			skill_ids: [],
+			file_ids: [],
+		};
+
+		try {
+			const env = await agentExecutor.buildEnv(req.user!.userId, req.user!.teamId);
+
+			let apiKey: string | undefined;
+			let model: ReturnType<typeof getModel> | undefined;
+
+			for (const candidate of PROFILE_GEN_CANDIDATES) {
+				const key = env[candidate.envVar];
+				if (!key) continue;
+				const m = getModel(candidate.provider as any, candidate.modelId);
+				if (!m) continue;
+				apiKey = key;
+				model = m;
+				break;
+			}
+
+			if (!apiKey || !model) {
+				res.json({ success: true, data: emptyResult });
+				return;
+			}
+
+			const skillsList = Array.isArray(available_skills) && available_skills.length > 0
+				? available_skills.map((s: any) => `- [${s.id}] ${s.name} (${s.scope}): ${s.description || "no description"}`).join("\n")
+				: "(none available)";
+			const filesList = Array.isArray(available_files) && available_files.length > 0
+				? available_files.map((f: any) => `- [${f.id}] ${f.filename}`).join("\n")
+				: "(none available)";
+
+			const descPart = description ? `\nDescription: ${description}` : "";
+
+			const context: Context = {
+				messages: [{
+					role: "user",
+					content: `You are helping create an AI agent profile. Generate the profile details as a JSON object.
+
+Agent name: ${name}${descPart}
+
+Available skills:
+${skillsList}
+
+Available files:
+${filesList}
+
+Return a JSON object with these fields:
+- "icon": a single emoji that represents this agent
+- "system_prompt": a detailed system prompt (2-4 paragraphs) instructing the agent on its role, capabilities, and behavior
+- "starter_message": a friendly greeting the agent shows when a chat starts (1-2 sentences)
+- "suggested_prompts": an array of 3-4 short example prompts users might send
+- "skill_ids": an array of skill IDs from the available skills list that this agent should use (use the IDs in brackets, empty array if none are relevant)
+- "file_ids": an array of file IDs from the available files list that this agent should have loaded (use the IDs in brackets, empty array if none are relevant)
+
+Return ONLY the JSON object, no markdown fences or extra text.`,
+					timestamp: Date.now(),
+				}],
+			};
+
+			const result = await complete(model, context, {
+				apiKey,
+				maxTokens: 2048,
+			} as any);
+
+			const textPart = result.content?.find((c: any) => c.type === "text");
+			const raw = textPart && "text" in textPart ? textPart.text.trim() : "";
+
+			// Strip markdown fences if present
+			const jsonStr = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+
+			let parsed: any;
+			try {
+				parsed = JSON.parse(jsonStr);
+			} catch {
+				console.error("[agent-profiles] Failed to parse generate response as JSON:", raw.slice(0, 200));
+				res.json({ success: true, data: emptyResult });
+				return;
+			}
+
+			// Validate and extract each field individually
+			const validSkillIds = new Set((available_skills || []).map((s: any) => s.id));
+			const validFileIds = new Set((available_files || []).map((f: any) => f.id));
+
+			const data = {
+				icon: typeof parsed.icon === "string" && parsed.icon.length > 0 ? parsed.icon : DEFAULT_ICON,
+				system_prompt: typeof parsed.system_prompt === "string" ? parsed.system_prompt : "",
+				starter_message: typeof parsed.starter_message === "string" ? parsed.starter_message : "",
+				suggested_prompts: Array.isArray(parsed.suggested_prompts)
+					? parsed.suggested_prompts.filter((p: any) => typeof p === "string").slice(0, 6)
+					: [],
+				skill_ids: Array.isArray(parsed.skill_ids)
+					? parsed.skill_ids.filter((id: any) => validSkillIds.has(id))
+					: [],
+				file_ids: Array.isArray(parsed.file_ids)
+					? parsed.file_ids.filter((id: any) => validFileIds.has(id))
+					: [],
+			};
+
+			res.json({ success: true, data });
+		} catch (err) {
+			console.error("[agent-profiles] Failed to generate profile:", err);
+			res.json({ success: true, data: emptyResult });
 		}
 	}));
 

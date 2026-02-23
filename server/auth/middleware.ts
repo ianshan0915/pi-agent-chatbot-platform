@@ -1,5 +1,6 @@
 import type { RequestHandler } from "express";
 import { verifyJwt } from "./local-auth.js";
+import { consumeSseTicket } from "./sse-tickets.js";
 
 /**
  * Express middleware that validates JWT from Authorization: Bearer <token> header.
@@ -31,33 +32,37 @@ export const requireAuth: RequestHandler = (req, res, next) => {
 };
 
 /**
- * Like requireAuth, but also accepts JWT from ?token= query parameter.
+ * Like requireAuth, but also accepts a single-use SSE ticket from ?ticket= query parameter.
  * Needed for SSE (EventSource can't set headers).
+ *
+ * Checks Authorization header first, then ?ticket= param via the short-lived ticket store.
  */
 export const requireAuthOrToken: RequestHandler = (req, res, next) => {
 	// Try Authorization header first
 	const header = req.headers.authorization;
-	const token = header?.startsWith("Bearer ")
-		? header.slice(7)
-		: (req.query.token as string | undefined);
-
-	if (!token) {
-		res.status(401).json({ success: false, error: "Missing authorization token" });
-		return;
+	if (header?.startsWith("Bearer ")) {
+		const token = header.slice(7);
+		const payload = verifyJwt(token);
+		if (payload) {
+			req.user = {
+				userId: payload.sub,
+				teamId: payload.teamId,
+				email: payload.email,
+				role: payload.role,
+			};
+			return next();
+		}
 	}
 
-	const payload = verifyJwt(token);
-	if (!payload) {
-		res.status(401).json({ success: false, error: "Invalid or expired token" });
-		return;
+	// Try single-use SSE ticket
+	const ticket = req.query.ticket as string | undefined;
+	if (ticket) {
+		const user = consumeSseTicket(ticket);
+		if (user) {
+			req.user = user as any;
+			return next();
+		}
 	}
 
-	req.user = {
-		userId: payload.sub,
-		teamId: payload.teamId,
-		email: payload.email,
-		role: payload.role,
-	};
-
-	next();
+	res.status(401).json({ success: false, error: "Missing or invalid authorization" });
 };

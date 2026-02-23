@@ -40,3 +40,22 @@ export function formatTokenCount(count: number): string {
 	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
 	return `${Math.round(count / 1000)}k`;
 }
+
+/**
+ * Simplified usage display: shows cost if available, otherwise total token count.
+ * For non-technical users who don't need the detailed breakdown.
+ */
+export function formatUsageSimple(usage: Usage): string {
+	if (!usage) return "";
+
+	if (usage.cost?.total) {
+		return formatCost(usage.cost.total);
+	}
+
+	const total = (usage.input || 0) + (usage.output || 0);
+	if (total > 0) {
+		return `${formatTokenCount(total)} tokens`;
+	}
+
+	return "";
+}

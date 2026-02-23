@@ -9,6 +9,8 @@ import dotenv from "dotenv";
 dotenv.config({ path: ".env.development" });
 dotenv.config(); // also load .env if it exists (overrides nothing by default)
 import express from "express";
+import helmet from "helmet";
+import cors from "cors";
 import { createServer } from "node:http";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -60,13 +62,78 @@ async function main() {
 
 	const app = express();
 
-	// Body parsing
-	app.use(express.json());
+	// --- Security middleware ---
 
-	// Health check (no auth required) — includes process pool and task queue stats
+	// 1.3 HTTPS redirect (production only, behind reverse proxy)
+	if (!isDev) {
+		app.set("trust proxy", 1);
+		app.use((req, res, next) => {
+			if (req.headers["x-forwarded-proto"] !== "https") {
+				return res.redirect(301, `https://${req.headers.host}${req.url}`);
+			}
+			next();
+		});
+	}
+
+	// 1.1 Security headers (helmet)
+	app.use(
+		helmet({
+			contentSecurityPolicy: {
+				directives: {
+					defaultSrc: ["'self'"],
+					scriptSrc: ["'self'", ...(isDev ? ["'unsafe-eval'"] : [])],
+					styleSrc: ["'self'", "'unsafe-inline'"],
+					imgSrc: ["'self'", "data:", "blob:"],
+					connectSrc: ["'self'", "ws:", "wss:"],
+					workerSrc: ["'self'", "blob:"],
+					fontSrc: ["'self'"],
+					objectSrc: ["'none'"],
+					frameAncestors: ["'none'"],
+				},
+			},
+			hsts: { maxAge: 31536000, includeSubDomains: true },
+			crossOriginEmbedderPolicy: false, // Allow loading external resources
+		}),
+	);
+
+	// 1.2 CORS
+	const allowedOrigins = process.env.ALLOWED_ORIGINS
+		? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
+		: [];
+	if (isDev) {
+		allowedOrigins.push("http://localhost:3001", "http://localhost:5173");
+	}
+	app.use(
+		cors({
+			origin: allowedOrigins.length > 0 ? allowedOrigins : false,
+			credentials: true,
+			methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+			allowedHeaders: ["Content-Type", "Authorization"],
+		}),
+	);
+
+	// 1.4 Body parsing with size limit
+	app.use(express.json({ limit: "1mb" }));
+
+	// 1.5 Cache-Control on API responses
+	app.use("/api", (_req, res, next) => {
+		res.setHeader("Cache-Control", "no-store");
+		res.setHeader("Pragma", "no-cache");
+		next();
+	});
+
+	// 1.6 Health check — public endpoint returns minimal info
 	app.get("/healthz", (_req, res) => {
+		res.json({ status: "ok" });
+	});
+	// Detailed health (behind auth) with pool/queue stats
+	app.get("/healthz/details", requireAuth, (_req, res) => {
 		res.json({ status: "ok", processPool: processPool.stats(), taskQueue: taskQueueService.stats() });
 	});
+
+	// 1.7 WebSocket per-user connection tracking
+	const wsConnectionCounts = new Map<string, number>();
+	const WS_MAX_PER_USER = 5;
 
 	// Track active CWDs per user (for agent-files endpoint)
 	const activeUserCwds = new Map<string, string>();
@@ -106,11 +173,17 @@ async function main() {
 		if (!RENDERABLE_EXTENSIONS.has(ext)) {
 			return res.status(400).json({ error: "Unsupported file type" });
 		}
-		// Validate path is under user's active CWD
+		// 1.8 Path traversal fix: resolve symlinks and use path.sep to prevent prefix attacks
 		if (cwd) {
-			const resolved = path.resolve(filePath);
-			if (!resolved.startsWith(cwd)) {
-				return res.status(403).json({ error: "Path is outside working directory" });
+			try {
+				const realFile = await fs.realpath(filePath);
+				const realCwd = await fs.realpath(cwd);
+				if (!realFile.startsWith(realCwd + path.sep) && realFile !== realCwd) {
+					return res.status(403).json({ error: "Path is outside working directory" });
+				}
+				filePath = realFile;
+			} catch {
+				return res.status(404).json({ error: "File not found" });
 			}
 		}
 		try {
@@ -136,6 +209,25 @@ async function main() {
 		// Auth user is attached by the upgrade handler
 		const user = (req as any).__authUser;
 		console.log(`[server] New WebSocket connection from ${user?.email || "unknown"}`);
+
+		// 1.7 Enforce per-user WebSocket connection limit
+		if (user?.userId) {
+			const count = wsConnectionCounts.get(user.userId) || 0;
+			if (count >= WS_MAX_PER_USER) {
+				console.warn(`[server] WebSocket limit exceeded for ${user.email} (${count}/${WS_MAX_PER_USER})`);
+				ws.close(4029, "Too many connections");
+				return;
+			}
+			wsConnectionCounts.set(user.userId, count + 1);
+			ws.on("close", () => {
+				const current = wsConnectionCounts.get(user.userId) || 1;
+				if (current <= 1) {
+					wsConnectionCounts.delete(user.userId);
+				} else {
+					wsConnectionCounts.set(user.userId, current - 1);
+				}
+			});
+		}
 
 		// Parse bridge options from query params
 		const url = new URL(req.url || "/", `http://localhost:${PORT}`);

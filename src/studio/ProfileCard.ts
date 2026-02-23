@@ -5,6 +5,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { ProfileInfo, SkillInfo } from "./types.js";
+import { getModelLabel } from "../shared/model-labels.js";
 
 @customElement("profile-card")
 export class ProfileCard extends LitElement {
@@ -191,7 +192,7 @@ export class ProfileCard extends LitElement {
 				</div>
 				${p.description ? html`<div class="card-desc">${p.description}</div>` : nothing}
 				<div class="card-meta">
-					${p.model_id ? html`<span class="meta-item">${p.model_id}</span>` : nothing}
+					${p.model_id ? html`<span class="meta-item">${getModelLabel(p.model_id)}</span>` : nothing}
 					${skillNames.length > 0 ? html`<span class="meta-item">${skillNames.length} skill${skillNames.length > 1 ? "s" : ""}</span>` : nothing}
 					${p.file_ids && p.file_ids.length > 0 ? html`<span class="meta-item">${p.file_ids.length} file${p.file_ids.length > 1 ? "s" : ""}</span>` : nothing}
 					<span class="meta-item">${p.use_count} use${p.use_count !== 1 ? "s" : ""}</span>

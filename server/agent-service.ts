@@ -87,14 +87,64 @@ export class TenantBridge extends WsBridge {
 	}
 
 	private async startAsync(): Promise<void> {
-		// 1. Fetch and inject provider keys + OAuth credentials
-		const agentExecutor = new AgentExecutor({ db: this.db, crypto: this.crypto, storage: this.storage });
-		const envKeys = await agentExecutor.buildEnv(this.user.userId, this.user.teamId);
+		const opts = this.options as TenantBridgeOptions;
+
+		// Run all async prep work in parallel — these are independent of each other
+		const [envKeys] = await Promise.all([
+			// 1. Fetch and inject provider keys + OAuth credentials
+			new AgentExecutor({ db: this.db, crypto: this.crypto, storage: this.storage })
+				.buildEnv(this.user.userId, this.user.teamId),
+
+			// 2. Resolve skills for this user (filtered by profile if set)
+			resolveSkillsForUser(
+				this.db, this.storage, this.user.userId, this.user.teamId,
+				opts.profileSkillIds,
+			).then(skills => {
+				this.resolvedSkills = skills;
+				if (skills.skillPaths.length > 0) {
+					console.log(`[tenant-bridge] Resolved ${skills.skillPaths.length} skill(s)`);
+				}
+			}).catch(err => {
+				console.error("[tenant-bridge] Failed to resolve skills:", err);
+			}),
+
+			// 3. Resolve files from agent profile
+			(opts.profileFileIds && opts.profileFileIds.length > 0
+				? resolveFilesForUser(
+					this.db, this.storage, this.user.userId,
+					opts.profileFileIds,
+				).then(files => {
+					this.resolvedFiles = files;
+					if (files.filePaths.length > 0) {
+						console.log(`[tenant-bridge] Resolved ${files.filePaths.length} file(s)`);
+					}
+				}).catch(err => {
+					console.error("[tenant-bridge] Failed to resolve files:", err);
+				})
+				: Promise.resolve()
+			),
+
+			// 4. Write system prompt to temp file if provided
+			(this.options.systemPrompt
+				? (async () => {
+					const promptFile = path.join(os.tmpdir(), `pi-sysprompt-${randomUUID()}.md`);
+					await fs.writeFile(promptFile, this.options.systemPrompt!);
+					this.tempSystemPromptFile = promptFile;
+				})()
+				: this.options.appendSystemPrompt
+					? (async () => {
+						const promptFile = path.join(os.tmpdir(), `pi-appendprompt-${randomUUID()}.md`);
+						await fs.writeFile(promptFile, this.options.appendSystemPrompt!);
+						this.tempSystemPromptFile = promptFile;
+					})()
+					: Promise.resolve()
+			),
+		]);
+
 		Object.assign(this.extraEnv, envKeys);
 
-		// Audit log: record key decryption for each provider
+		// Audit log: record key decryption for each provider (non-blocking)
 		for (const key of Object.keys(envKeys)) {
-			// Best-effort audit logging (non-blocking)
 			this.db.query(
 				`INSERT INTO provider_key_audit_log (team_id, user_id, provider, action)
 				 VALUES ($1, $2, $3, 'decrypt')`,
@@ -102,48 +152,7 @@ export class TenantBridge extends WsBridge {
 			).catch(() => {});
 		}
 
-		// 1b. Resolve skills for this user (filtered by profile if set)
-		try {
-			const opts = this.options as TenantBridgeOptions;
-			this.resolvedSkills = await resolveSkillsForUser(
-				this.db, this.storage, this.user.userId, this.user.teamId,
-				opts.profileSkillIds,
-			);
-			if (this.resolvedSkills.skillPaths.length > 0) {
-				console.log(`[tenant-bridge] Resolved ${this.resolvedSkills.skillPaths.length} skill(s)`);
-			}
-		} catch (err) {
-			console.error("[tenant-bridge] Failed to resolve skills:", err);
-		}
-
-		// 1b2. Resolve files from agent profile
-		try {
-			const opts = this.options as TenantBridgeOptions;
-			if (opts.profileFileIds && opts.profileFileIds.length > 0) {
-				this.resolvedFiles = await resolveFilesForUser(
-					this.db, this.storage, this.user.userId,
-					opts.profileFileIds,
-				);
-				if (this.resolvedFiles.filePaths.length > 0) {
-					console.log(`[tenant-bridge] Resolved ${this.resolvedFiles.filePaths.length} file(s)`);
-				}
-			}
-		} catch (err) {
-			console.error("[tenant-bridge] Failed to resolve files:", err);
-		}
-
-		// 1c. Write system prompt to temp file if provided (pi CLI reads file paths)
-		if (this.options.systemPrompt) {
-			const promptFile = path.join(os.tmpdir(), `pi-sysprompt-${randomUUID()}.md`);
-			await fs.writeFile(promptFile, this.options.systemPrompt);
-			this.tempSystemPromptFile = promptFile;
-		} else if (this.options.appendSystemPrompt) {
-			const promptFile = path.join(os.tmpdir(), `pi-appendprompt-${randomUUID()}.md`);
-			await fs.writeFile(promptFile, this.options.appendSystemPrompt);
-			this.tempSystemPromptFile = promptFile;
-		}
-
-		// 2. Check for existing process (reconnection)
+		// 5. Check for existing process (reconnection)
 		const existingSessionId = this.sessionId;
 		if (existingSessionId) {
 			const existing = this.processPool.get(existingSessionId);

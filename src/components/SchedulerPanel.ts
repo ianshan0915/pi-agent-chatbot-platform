@@ -11,6 +11,7 @@
 
 import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import "./CronBuilder.js";
 
 interface Job {
 	id: string;
@@ -503,7 +504,11 @@ export class SchedulerPanel extends LitElement {
 		}
 
 		if (this.jobs.length === 0) {
-			return html`<div class="empty">No scheduled jobs yet. Create one to get started.</div>`;
+			return html`<div class="empty">
+				<div style="font-size: 1.5rem; margin-bottom: 0.5rem;">📅</div>
+				<div style="font-weight: 600; margin-bottom: 0.25rem;">No scheduled jobs yet</div>
+				<div>Schedule recurring AI tasks that run automatically and deliver results via email or Teams. Great for daily reports, data monitoring, and routine analyses.</div>
+			</div>`;
 		}
 
 		return html`
@@ -577,13 +582,11 @@ export class SchedulerPanel extends LitElement {
 				</div>
 
 				<div class="form-field">
-					<label>Cron Expression * <small>(e.g., "0 9 * * *" = daily at 9am)</small></label>
-					<input
-						type="text"
+					<label>Schedule *</label>
+					<cron-builder
 						.value=${this.formData.cron_expr}
-						@input=${(e: Event) => (this.formData.cron_expr = (e.target as HTMLInputElement).value)}
-						placeholder="0 9 * * *"
-					/>
+						@cron-change=${(e: CustomEvent) => { this.formData.cron_expr = e.detail.value; }}
+					></cron-builder>
 				</div>
 
 				<div class="form-field">

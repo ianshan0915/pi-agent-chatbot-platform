@@ -6,6 +6,30 @@ import type { AuthResponse, JwtPayload } from "./types.js";
 const SALT_ROUNDS = 12;
 const TOKEN_EXPIRY = "7d";
 
+/** Custom error for 400 validation failures. */
+export class ValidationError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "ValidationError";
+	}
+}
+
+/** Validate password complexity: min 8 chars, 1 lowercase, 1 uppercase, 1 number. */
+export function validatePassword(password: string): void {
+	if (password.length < 8) {
+		throw new ValidationError("Password must be at least 8 characters long");
+	}
+	if (!/[a-z]/.test(password)) {
+		throw new ValidationError("Password must contain at least one lowercase letter");
+	}
+	if (!/[A-Z]/.test(password)) {
+		throw new ValidationError("Password must contain at least one uppercase letter");
+	}
+	if (!/[0-9]/.test(password)) {
+		throw new ValidationError("Password must contain at least one number");
+	}
+}
+
 function getJwtSecret(): string {
 	const secret = process.env.JWT_SECRET;
 	if (!secret) {
@@ -41,6 +65,9 @@ export async function registerUser(
 	displayName?: string,
 	teamName?: string,
 ): Promise<AuthResponse> {
+	// Validate password complexity
+	validatePassword(password);
+
 	// Check for existing user
 	const { rows: existing } = await db.query(
 		"SELECT id FROM users WHERE email = $1",

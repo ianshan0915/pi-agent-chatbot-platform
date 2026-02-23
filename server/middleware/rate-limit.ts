@@ -10,11 +10,15 @@ export const apiRateLimit = rateLimit({
 	message: { success: false, error: "Too many requests, please try again later" },
 });
 
-/** 10 req/min per IP for auth endpoints (login/register) */
+/** 5 req/min per IP+email for auth endpoints (login/register) */
 export const authRateLimit = rateLimit({
 	windowMs: 60 * 1000,
-	max: 10,
-	keyGenerator: (req) => ipKeyGenerator(req),
+	max: 5,
+	keyGenerator: (req) => {
+		const ip = ipKeyGenerator(req);
+		const email = req.body?.email || "unknown";
+		return `${ip}:${email}`;
+	},
 	standardHeaders: true,
 	legacyHeaders: false,
 	message: { success: false, error: "Too many auth attempts, please try again later" },

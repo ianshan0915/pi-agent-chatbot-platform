@@ -252,7 +252,7 @@ export class SkillsPanel extends LitElement {
 			: [{ value: "user", label: "My Skills" }];
 
 		return html`
-			<h3>Skills</h3>
+			<h3>Agent Tools</h3>
 
 			${this.statusMessage
 				? html`<div class="status ${this.statusType === "success" ? "status-success" : "status-error"}">${this.statusMessage}</div>`
@@ -261,7 +261,11 @@ export class SkillsPanel extends LitElement {
 			${this.loading
 				? html`<div class="empty">Loading...</div>`
 				: this.skills.length === 0
-					? html`<div class="empty">No skills configured. Upload a SKILL.md or skill zip bundle below.</div>`
+					? html`<div class="empty">
+						<div style="font-size: 1.5rem; margin-bottom: 0.5rem;">🧩</div>
+						<div style="font-weight: 600; margin-bottom: 0.25rem;">No agent tools configured</div>
+						<div>Agent tools teach the AI new capabilities. Upload a SKILL.md file or zip bundle to extend what your AI assistant can do.</div>
+					</div>`
 					: html`
 						<div class="skill-list">
 							${this.skills.map(

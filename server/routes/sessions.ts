@@ -7,6 +7,8 @@ import { requireAuth } from "../auth/middleware.js";
 import { isOwner } from "../auth/permissions.js";
 import { asyncRoute } from "../utils/async-handler.js";
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const router = Router();
 
 // All routes require authentication
@@ -68,6 +70,13 @@ router.get("/", asyncRoute(async (req, res) => {
 router.post("/", asyncRoute(async (req, res) => {
 	const db = getDatabase();
 	const { id, title, modelId, provider, thinkingLevel, agentProfileId } = req.body;
+
+	// 1.14 Validate client-provided session ID format
+	if (id && !UUID_REGEX.test(id)) {
+		res.status(400).json({ success: false, error: "Session ID must be a valid UUID" });
+		return;
+	}
+
 	// Use client-provided ID if present, otherwise generate one
 	const sessionId = id || randomUUID();
 	const now = new Date();

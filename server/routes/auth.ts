@@ -5,8 +5,10 @@ import {
 	loginUser,
 	ConflictError,
 	AuthError,
+	ValidationError,
 } from "../auth/local-auth.js";
 import { requireAuth } from "../auth/middleware.js";
+import { createSseTicket } from "../auth/sse-tickets.js";
 import { getDatabase } from "../db/index.js";
 
 const router = Router();
@@ -26,6 +28,10 @@ router.post("/register", async (req, res) => {
 		const data = await registerUser(db, email, password, displayName, teamName);
 		res.status(201).json({ success: true, data });
 	} catch (err) {
+		if (err instanceof ValidationError) {
+			res.status(400).json({ success: false, error: err.message });
+			return;
+		}
 		if (err instanceof ConflictError) {
 			res.status(409).json({ success: false, error: err.message });
 			return;
@@ -59,6 +65,12 @@ router.post("/login", async (req, res) => {
 // GET /api/auth/me
 router.get("/me", requireAuth, (req, res) => {
 	res.json({ success: true, data: { user: req.user } });
+});
+
+// POST /api/auth/sse-ticket — Issue a short-lived, single-use ticket for SSE auth
+router.post("/sse-ticket", requireAuth, (req, res) => {
+	const ticket = createSseTicket(req.user!);
+	res.json({ success: true, data: { ticket } });
 });
 
 export default router;

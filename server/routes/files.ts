@@ -13,6 +13,30 @@ import type { UserFileRow } from "../db/types.js";
 import { requireAuth } from "../auth/middleware.js";
 import type { StorageService } from "../services/storage.js";
 import { asyncRoute } from "../utils/async-handler.js";
+import { contentDisposition } from "../utils/sanitize-filename.js";
+
+/** Allowed MIME types for file uploads */
+const ALLOWED_MIME_TYPES = new Set([
+	// Text
+	"text/plain", "text/csv", "text/html", "text/css", "text/javascript", "text/markdown",
+	"text/xml", "text/yaml",
+	// Documents
+	"application/pdf",
+	"application/msword",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.ms-excel",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"application/vnd.ms-powerpoint",
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	// Data
+	"application/json", "application/xml",
+	// Images
+	"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml",
+	// Archives
+	"application/zip", "application/gzip",
+	// Fallback for unknown types (Content-Disposition: attachment prevents execution)
+	"application/octet-stream",
+]);
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB max
 
@@ -42,6 +66,14 @@ export function createFilesRouter(storage: StorageService): Router {
 	router.post("/", upload.single("file"), asyncRoute(async (req, res) => {
 		if (!req.file) {
 			res.status(400).json({ success: false, error: "file field is required" });
+			return;
+		}
+
+		// 1.13 MIME type allowlist
+		const mimeType = req.file.mimetype || "application/octet-stream";
+		const isTextWildcard = mimeType.startsWith("text/");
+		if (!isTextWildcard && !ALLOWED_MIME_TYPES.has(mimeType)) {
+			res.status(400).json({ success: false, error: `File type "${mimeType}" is not allowed` });
 			return;
 		}
 
@@ -87,7 +119,7 @@ export function createFilesRouter(storage: StorageService): Router {
 		const data = await storage.download(file.storage_key);
 
 		res.setHeader("Content-Type", file.content_type || "application/octet-stream");
-		res.setHeader("Content-Disposition", `attachment; filename="${file.filename}"`);
+		res.setHeader("Content-Disposition", contentDisposition(file.filename));
 		res.send(data);
 	}));
 

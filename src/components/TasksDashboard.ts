@@ -391,13 +391,30 @@ export class TasksDashboard extends LitElement {
 		} catch {}
 	}
 
-	private connectSse(taskId: string) {
+	private async connectSse(taskId: string) {
 		if (this.eventSources.has(taskId)) return;
 
 		const token = this.getToken?.();
 		if (!token) return;
 
-		const es = new EventSource(`/api/tasks/${taskId}/events?token=${encodeURIComponent(token)}`);
+		// Obtain a single-use SSE ticket instead of sending the JWT directly
+		let ticket: string;
+		try {
+			const res = await fetch("/api/auth/sse-ticket", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${token}`,
+				},
+			});
+			const data = await res.json();
+			if (!data.success || !data.data?.ticket) return;
+			ticket = data.data.ticket;
+		} catch {
+			return;
+		}
+
+		const es = new EventSource(`/api/tasks/${taskId}/events?ticket=${encodeURIComponent(ticket)}`);
 		this.eventSources.set(taskId, es);
 
 		es.addEventListener("progress", (e) => {
@@ -596,7 +613,11 @@ export class TasksDashboard extends LitElement {
 		}
 
 		if (this.tasks.length === 0) {
-			return html`<div class="empty">No tasks yet. Submit one to get started.</div>`;
+			return html`<div class="empty">
+				<div style="font-size: 1.5rem; margin-bottom: 0.5rem;">🤖</div>
+				<div style="font-weight: 600; margin-bottom: 0.25rem;">No background tasks yet</div>
+				<div>Background tasks let the AI work on longer jobs while you do other things. Results are saved and can include file attachments.</div>
+			</div>`;
 		}
 
 		return html`
@@ -606,11 +627,31 @@ export class TasksDashboard extends LitElement {
 		`;
 	}
 
+	private async downloadArtifact(taskId: string, artifactId: string, filename: string) {
+		const token = this.getToken?.();
+		if (!token) return;
+		try {
+			const res = await fetch(`/api/tasks/${taskId}/artifacts/${artifactId}`, {
+				headers: { Authorization: `Bearer ${token}` },
+			});
+			if (!res.ok) return;
+			const blob = await res.blob();
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement("a");
+			a.href = url;
+			a.download = filename;
+			a.click();
+			URL.revokeObjectURL(url);
+		} catch {
+			this.statusMessage = "Download failed";
+			this.statusType = "error";
+		}
+	}
+
 	private renderTaskItem(task: Task) {
 		const isActive = task.status === "pending" || task.status === "claimed" || task.status === "running";
 		const isExpanded = this.expandedTaskId === task.id;
 		const artifacts = this.taskArtifacts.get(task.id) || [];
-		const token = this.getToken?.();
 
 		return html`
 			<div class="task-item ${isExpanded ? "expanded" : ""}" @click=${() => this.handleExpandTask(task)}>
@@ -644,14 +685,12 @@ export class TasksDashboard extends LitElement {
 						<div class="artifacts">
 							${artifacts.map(
 								(a) => html`
-									<a
+									<span
 										class="artifact-chip"
-										href="/api/tasks/${task.id}/artifacts/${a.id}?token=${encodeURIComponent(token || "")}"
-										target="_blank"
-										@click=${(e: Event) => e.stopPropagation()}
+										@click=${(e: Event) => { e.stopPropagation(); this.downloadArtifact(task.id, a.id, a.filename); }}
 									>
 										${a.filename}${a.size_bytes ? ` (${this.formatBytes(a.size_bytes)})` : ""}
-									</a>
+									</span>
 								`,
 							)}
 						</div>
@@ -670,6 +709,13 @@ export class TasksDashboard extends LitElement {
 		`;
 	}
 
+	private readonly taskTemplates = [
+		"Summarize key points from this document",
+		"Generate a weekly status report",
+		"Analyze this spreadsheet",
+		"Convert meeting notes into action items",
+	];
+
 	private renderCreateForm() {
 		return html`
 			<div class="form-section">
@@ -680,6 +726,18 @@ export class TasksDashboard extends LitElement {
 
 				<div class="form-field">
 					<label>Prompt *</label>
+					${!this.formData.prompt ? html`
+						<div style="display: flex; flex-wrap: wrap; gap: 0.25rem; margin-bottom: 0.5rem;">
+							${this.taskTemplates.map(t => html`
+								<span
+									style="padding: 0.25rem 0.5rem; border: 1px solid var(--border, #e5e7eb); border-radius: 1rem; font-size: 0.75rem; cursor: pointer; background: var(--background, #fff); color: var(--foreground, #111); transition: background 0.15s;"
+									@click=${() => { this.formData = { ...this.formData, prompt: t }; }}
+									@mouseenter=${(e: Event) => (e.target as HTMLElement).style.background = "var(--muted, #f3f4f6)"}
+									@mouseleave=${(e: Event) => (e.target as HTMLElement).style.background = "var(--background, #fff)"}
+								>${t}</span>
+							`)}
+						</div>
+					` : ""}
 					<textarea
 						.value=${this.formData.prompt}
 						@input=${(e: Event) => (this.formData = { ...this.formData, prompt: (e.target as HTMLTextAreaElement).value })}

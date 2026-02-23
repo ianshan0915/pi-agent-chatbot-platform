@@ -20,6 +20,7 @@ import type { StorageService } from "../services/storage.js";
 import type { CryptoService } from "../services/crypto.js";
 import type { TaskQueueService } from "../services/task-queue.js";
 import { asyncRoute } from "../utils/async-handler.js";
+import { contentDisposition } from "../utils/sanitize-filename.js";
 
 export function createTasksRouter(
 	storage: StorageService,
@@ -150,7 +151,7 @@ export function createTasksRouter(
 		const data = await storage.download(a.storage_key);
 
 		res.setHeader("Content-Type", a.content_type || "application/octet-stream");
-		res.setHeader("Content-Disposition", `attachment; filename="${a.filename}"`);
+		res.setHeader("Content-Disposition", contentDisposition(a.filename));
 		if (a.size_bytes) {
 			res.setHeader("Content-Length", a.size_bytes.toString());
 		}

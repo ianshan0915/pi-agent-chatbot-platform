@@ -14,7 +14,7 @@ import "./ProfilePreview.js";
 import "./SkillsTab.js";
 import "./FilesTab.js";
 
-type ViewMode = "browse" | "edit";
+type ViewMode = "browse" | "quick-create" | "edit";
 type ScopeFilter = "all" | "platform" | "team" | "user";
 type StudioTab = "profiles" | "skills" | "files";
 
@@ -238,6 +238,98 @@ export class StudioPage extends LitElement {
 			padding: 3rem;
 			color: var(--muted-foreground, #6b7280);
 		}
+
+		/* Quick Create */
+		.quick-create-wrapper {
+			flex: 1;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 2rem;
+			overflow-y: auto;
+		}
+		.quick-create-card {
+			max-width: 480px;
+			width: 100%;
+			padding: 2rem;
+			border: 1px solid var(--border, #e5e7eb);
+			border-radius: 0.75rem;
+			background: var(--background, #fff);
+		}
+		.quick-create-card h2 {
+			margin: 0 0 0.25rem;
+			font-size: 1.125rem;
+			font-weight: 600;
+		}
+		.quick-create-card .subtitle {
+			margin: 0 0 1.5rem;
+			font-size: 0.85rem;
+			color: var(--muted-foreground, #6b7280);
+		}
+		.quick-create-card .form-field {
+			display: flex;
+			flex-direction: column;
+			gap: 0.25rem;
+			margin-bottom: 0.75rem;
+		}
+		.quick-create-card label {
+			font-size: 0.75rem;
+			font-weight: 500;
+			color: var(--muted-foreground, #6b7280);
+		}
+		.quick-create-card input,
+		.quick-create-card textarea,
+		.quick-create-card select {
+			padding: 0.5rem;
+			border: 1px solid var(--border, #e5e7eb);
+			border-radius: 0.375rem;
+			font-size: 0.875rem;
+			background: var(--background, #fff);
+			color: var(--foreground, #111);
+			font-family: inherit;
+		}
+		.quick-create-card input:focus,
+		.quick-create-card textarea:focus,
+		.quick-create-card select:focus {
+			outline: none;
+			border-color: var(--primary, #2563eb);
+			box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary, #2563eb) 20%, transparent);
+		}
+		.quick-create-card textarea {
+			resize: vertical;
+			min-height: 4rem;
+		}
+		.quick-create-actions {
+			display: flex;
+			gap: 0.5rem;
+			justify-content: flex-end;
+			margin-top: 1.25rem;
+		}
+		.btn-secondary {
+			padding: 0.5rem 1rem;
+			border: 1px solid var(--border, #e5e7eb);
+			border-radius: 0.375rem;
+			font-size: 0.85rem;
+			font-weight: 500;
+			background: transparent;
+			color: var(--foreground, #111);
+			font-family: inherit;
+		}
+		.btn-secondary:hover {
+			background: var(--muted, #f3f4f6);
+		}
+		.btn-primary:disabled {
+			opacity: 0.5;
+			cursor: not-allowed;
+		}
+		.generate-error {
+			margin-top: 0.75rem;
+			padding: 0.5rem;
+			border-radius: 0.375rem;
+			background: #fef2f2;
+			color: #991b1b;
+			font-size: 0.8rem;
+		}
 	`;
 
 	@property({ type: Function })
@@ -264,6 +356,14 @@ export class StudioPage extends LitElement {
 	@state() private scopeFilter: ScopeFilter = "all";
 	@state() private searchQuery = "";
 	@state() private previewForm: ProfileFormData = { ...EMPTY_FORM };
+
+	// Quick Create state
+	@state() private quickCreateName = "";
+	@state() private quickCreateDescription = "";
+	@state() private quickCreateScope = "user";
+	@state() private generating = false;
+	@state() private generateError = "";
+	@state() private initialFormData: ProfileFormData | null = null;
 
 	override connectedCallback() {
 		super.connectedCallback();
@@ -315,6 +415,7 @@ export class StudioPage extends LitElement {
 		const profile = this.profiles.find(p => p.id === id);
 		if (profile) {
 			this.editingProfile = profile;
+			this.initialFormData = null;
 			this.viewMode = "edit";
 			this._initPreviewFromProfile(profile);
 		}
@@ -339,8 +440,13 @@ export class StudioPage extends LitElement {
 
 	private _openNewForm() {
 		this.editingProfile = null;
-		this.viewMode = "edit";
-		this.previewForm = { ...EMPTY_FORM };
+		this.initialFormData = null;
+		this.quickCreateName = "";
+		this.quickCreateDescription = "";
+		this.quickCreateScope = "user";
+		this.generating = false;
+		this.generateError = "";
+		this.viewMode = "quick-create";
 	}
 
 	private _backToBrowse() {
@@ -415,7 +521,7 @@ export class StudioPage extends LitElement {
 	private _renderTabBar() {
 		const tabs: { id: StudioTab; label: string }[] = [
 			{ id: "profiles", label: "Profiles" },
-			{ id: "skills", label: "Skills" },
+			{ id: "skills", label: "Agent Tools" },
 			{ id: "files", label: "Files" },
 		];
 		return html`
@@ -502,12 +608,136 @@ export class StudioPage extends LitElement {
 		`;
 	}
 
+	private async _generateProfile() {
+		if (!this.quickCreateName) return;
+		this.generating = true;
+		this.generateError = "";
+
+		try {
+			const result = await this._fetchApi("/api/agent-profiles/generate", {
+				method: "POST",
+				body: JSON.stringify({
+					name: this.quickCreateName,
+					description: this.quickCreateDescription || undefined,
+					available_skills: this.availableSkills.map(s => ({
+						id: s.id, name: s.name, description: s.description, scope: s.scope,
+					})),
+					available_files: this.availableFiles.map(f => ({
+						id: f.id, filename: f.filename,
+					})),
+				}),
+			});
+
+			if (result.success && result.data) {
+				const d = result.data;
+				this.initialFormData = {
+					name: this.quickCreateName,
+					description: this.quickCreateDescription,
+					icon: d.icon || "",
+					scope: this.quickCreateScope,
+					system_prompt: d.system_prompt || "",
+					prompt_mode: "replace",
+					skill_ids: Array.isArray(d.skill_ids) ? d.skill_ids : [],
+					file_ids: Array.isArray(d.file_ids) ? d.file_ids : [],
+					model_id: "",
+					provider: "",
+					starter_message: d.starter_message || "",
+					suggested_prompts: Array.isArray(d.suggested_prompts) ? d.suggested_prompts : [],
+				};
+			} else {
+				this.generateError = result.error || "Generation failed. You can try again or skip to the editor.";
+				return;
+			}
+		} catch {
+			this.generateError = "Network error. You can try again or skip to the editor.";
+			return;
+		} finally {
+			this.generating = false;
+		}
+
+		this.previewForm = { ...this.initialFormData! };
+		this.viewMode = "edit";
+	}
+
+	private _skipToEditor() {
+		this.initialFormData = {
+			...EMPTY_FORM,
+			name: this.quickCreateName,
+			description: this.quickCreateDescription,
+			scope: this.quickCreateScope,
+		};
+		this.previewForm = { ...this.initialFormData };
+		this.viewMode = "edit";
+	}
+
+	private _renderQuickCreate() {
+		const isAdmin = this.userRole === "admin";
+
+		return html`
+			<div class="quick-create-wrapper">
+				<div class="quick-create-card">
+					<h2>Create New Agent Profile</h2>
+					<p class="subtitle">Enter a name and description, then let AI generate the profile for you.</p>
+
+					<div class="form-field">
+						<label>Name *</label>
+						<input
+							type="text"
+							placeholder="e.g. Finance Agent"
+							maxlength="100"
+							.value=${this.quickCreateName}
+							@input=${(e: Event) => { this.quickCreateName = (e.target as HTMLInputElement).value; }}
+						/>
+					</div>
+
+					<div class="form-field">
+						<label>Description</label>
+						<textarea
+							placeholder="What should this agent do? e.g. Helps analyze budgets and financial reports"
+							.value=${this.quickCreateDescription}
+							@input=${(e: Event) => { this.quickCreateDescription = (e.target as HTMLTextAreaElement).value; }}
+						></textarea>
+					</div>
+
+					${isAdmin ? html`
+						<div class="form-field">
+							<label>Scope</label>
+							<select
+								.value=${this.quickCreateScope}
+								@change=${(e: Event) => { this.quickCreateScope = (e.target as HTMLSelectElement).value; }}
+							>
+								<option value="user">Personal</option>
+								<option value="team">Team</option>
+								<option value="platform">Platform</option>
+							</select>
+						</div>
+					` : nothing}
+
+					${this.generateError ? html`<div class="generate-error">${this.generateError}</div>` : nothing}
+
+					<div class="quick-create-actions">
+						<button class="btn-secondary" @click=${() => this._backToBrowse()}>Cancel</button>
+						<button class="btn-secondary" @click=${() => this._skipToEditor()}>Skip to Editor</button>
+						<button
+							class="btn-primary"
+							?disabled=${this.generating || !this.quickCreateName}
+							@click=${() => this._generateProfile()}
+						>
+							${this.generating ? "Generating..." : "Generate with AI"}
+						</button>
+					</div>
+				</div>
+			</div>
+		`;
+	}
+
 	private _renderEdit() {
 		return html`
 			<div class="edit-content">
 				<div class="edit-form-pane">
 					<profile-editor
 						.profile=${this.editingProfile}
+						.initialForm=${this.initialFormData}
 						.getToken=${this.getToken}
 						.userRole=${this.userRole}
 						.availableSkills=${this.availableSkills}
@@ -530,6 +760,12 @@ export class StudioPage extends LitElement {
 
 	override render() {
 		const isEdit = this.viewMode === "edit";
+		const isQuickCreate = this.viewMode === "quick-create";
+		const isBrowse = this.viewMode === "browse";
+
+		const headerTitle = isEdit
+			? (this.editingProfile ? "Edit Profile" : "New Profile")
+			: isQuickCreate ? "New Profile" : "Agent Builder";
 
 		return html`
 			<div class="studio">
@@ -537,24 +773,24 @@ export class StudioPage extends LitElement {
 				<div class="header">
 					<div class="header-left">
 						<button class="back-link" @click=${() => {
-							if (isEdit) this._backToBrowse();
+							if (isEdit || isQuickCreate) this._backToBrowse();
 							else navigateTo("/");
 						}}>
-							&larr; ${isEdit ? "Back to Browse" : "Back to Chat"}
+							&larr; ${isEdit || isQuickCreate ? "Back to Browse" : "Back to Chat"}
 						</button>
-						<span class="header-title">${isEdit ? (this.editingProfile ? "Edit Profile" : "New Profile") : "Agent Studio"}</span>
+						<span class="header-title">${headerTitle}</span>
 					</div>
 					<div>
 						${isEdit && this.editingProfile ? html`
 							<button class="btn-danger" @click=${() => this._handleDelete(this.editingProfile!)}>Delete</button>
 						` : nothing}
-						${!isEdit && this.activeTab === "profiles" ? html`
+						${isBrowse && this.activeTab === "profiles" ? html`
 							<button class="btn-primary" @click=${() => this._handleHeaderAction()}>${this._getHeaderActionLabel()}</button>
 						` : nothing}
 					</div>
 				</div>
 
-				${isEdit ? this._renderEdit() : html`
+				${isEdit ? this._renderEdit() : isQuickCreate ? this._renderQuickCreate() : html`
 					${this._renderTabBar()}
 					<div class="tab-content">
 						${this.activeTab === "profiles" ? this._renderProfilesBrowse() : nothing}

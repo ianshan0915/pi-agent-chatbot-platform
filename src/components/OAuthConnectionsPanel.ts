@@ -343,7 +343,7 @@ export class OAuthConnectionsPanel extends LitElement {
 
 	override render() {
 		return html`
-			<h3>OAuth Subscriptions</h3>
+			<h3>Your AI Subscriptions</h3>
 			<p style="font-size: 0.875rem; color: var(--muted-foreground, #6b7280); margin-bottom: 1rem;">
 				Connect your subscription-based LLM accounts. Your credentials are stored securely and never shared.
 			</p>
