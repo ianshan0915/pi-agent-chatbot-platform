@@ -152,6 +152,46 @@ export class OAuthConnectionsPanel extends LitElement {
 			color: var(--muted-foreground, #6b7280);
 			font-size: 0.875rem;
 		}
+		.code-input-card {
+			padding: 1rem;
+			border: 2px solid var(--primary, #2563eb);
+			border-radius: 0.5rem;
+			background: var(--card, #fff);
+			margin-bottom: 1rem;
+			display: flex;
+			flex-direction: column;
+			gap: 0.75rem;
+		}
+		.code-input-card label {
+			font-size: 0.875rem;
+			font-weight: 500;
+		}
+		.code-input-card .hint {
+			font-size: 0.75rem;
+			color: var(--muted-foreground, #6b7280);
+		}
+		.code-input-row {
+			display: flex;
+			gap: 0.5rem;
+		}
+		.code-input-row input {
+			flex: 1;
+			padding: 0.5rem 0.75rem;
+			border: 1px solid var(--border, #e5e7eb);
+			border-radius: 0.375rem;
+			font-size: 0.875rem;
+			font-family: monospace;
+		}
+		.code-input-row input:focus {
+			outline: none;
+			border-color: var(--primary, #2563eb);
+			box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+		}
+		.btn-cancel {
+			background: transparent;
+			color: var(--muted-foreground, #6b7280);
+			border: 1px solid var(--border, #e5e7eb);
+		}
 		h3 {
 			margin: 0 0 1rem 0;
 			font-size: 1rem;
@@ -184,6 +224,16 @@ export class OAuthConnectionsPanel extends LitElement {
 
 	@state()
 	private statusType: "success" | "error" = "success";
+
+	/** Provider currently awaiting a pasted auth code */
+	@state()
+	private pendingCodeProvider: string | null = null;
+
+	/** The OAuth state token for the pending code exchange */
+	private pendingState: string | null = null;
+
+	/** Reference to the open OAuth popup */
+	private oauthPopup: Window | null = null;
 
 	override connectedCallback() {
 		super.connectedCallback();
@@ -230,6 +280,7 @@ export class OAuthConnectionsPanel extends LitElement {
 			if (!startResult.success) {
 				this.statusMessage = startResult.error || "Failed to start OAuth flow";
 				this.statusType = "error";
+				this.connecting = { ...this.connecting, [provider]: false };
 				return;
 			}
 
@@ -245,18 +296,46 @@ export class OAuthConnectionsPanel extends LitElement {
 			if (!popup) {
 				this.statusMessage = "Please allow popups to connect";
 				this.statusType = "error";
+				this.connecting = { ...this.connecting, [provider]: false };
 				return;
 			}
 
-			// Wait for user to authorize and get the code
-			const code = await this.waitForOAuthCode(popup, provider);
-			if (!code) {
-				this.statusMessage = "OAuth flow was cancelled";
-				this.statusType = "error";
-				return;
-			}
+			// Store state and show inline code input
+			this.oauthPopup = popup;
+			this.pendingState = state;
+			this.pendingCodeProvider = provider;
+			// connecting state stays true — cleared when code is submitted or cancelled
+		} catch (err) {
+			console.error("OAuth connection error:", err);
+			this.statusMessage = "Network error";
+			this.statusType = "error";
+			this.connecting = { ...this.connecting, [provider]: false };
+		}
+	}
 
-			// Exchange code for tokens
+	private async handleCodeSubmit() {
+		const provider = this.pendingCodeProvider;
+		const state = this.pendingState;
+		if (!provider || !state) return;
+
+		const input = this.shadowRoot?.querySelector<HTMLInputElement>("#oauth-code-input");
+		const rawCode = input?.value?.trim();
+		if (!rawCode) return;
+
+		// Extract code from "code#state" format that some providers use
+		const code = rawCode.split("#")[0];
+
+		// Close popup if still open
+		if (this.oauthPopup && !this.oauthPopup.closed) {
+			this.oauthPopup.close();
+		}
+
+		// Clear the pending state
+		this.pendingCodeProvider = null;
+		this.pendingState = null;
+		this.oauthPopup = null;
+
+		try {
 			const callbackResult = await this.fetchApi(`/api/oauth/${provider}/callback`, {
 				method: "POST",
 				body: JSON.stringify({ code, state }),
@@ -279,35 +358,17 @@ export class OAuthConnectionsPanel extends LitElement {
 		}
 	}
 
-	private async waitForOAuthCode(popup: Window, provider: string): Promise<string | null> {
-		return new Promise((resolve) => {
-			// For Anthropic, the redirect URL is console.anthropic.com/oauth/code/callback
-			// which shows the code on the page. User needs to copy-paste it.
-
-			// Show a prompt dialog for the user to paste the code
-			setTimeout(() => {
-				if (popup.closed) {
-					resolve(null);
-					return;
-				}
-
-				const code = prompt(
-					`After authorizing ${PROVIDER_LABELS[provider]}, please paste the authorization code shown on the page:`
-				);
-
-				if (!popup.closed) {
-					popup.close();
-				}
-
-				// Extract code from "code#state" format
-				if (code) {
-					const parts = code.split("#");
-					resolve(parts[0]);
-				} else {
-					resolve(null);
-				}
-			}, 2000); // Give user time to see the authorization page
-		});
+	private handleCodeCancel() {
+		const provider = this.pendingCodeProvider;
+		if (this.oauthPopup && !this.oauthPopup.closed) {
+			this.oauthPopup.close();
+		}
+		this.pendingCodeProvider = null;
+		this.pendingState = null;
+		this.oauthPopup = null;
+		if (provider) {
+			this.connecting = { ...this.connecting, [provider]: false };
+		}
 	}
 
 	private async handleDisconnect(provider: string) {
@@ -350,6 +411,25 @@ export class OAuthConnectionsPanel extends LitElement {
 
 			${this.statusMessage
 				? html`<div class="status ${this.statusType === "success" ? "status-success" : "status-error"}">${this.statusMessage}</div>`
+				: null}
+
+			${this.pendingCodeProvider
+				? html`
+					<div class="code-input-card">
+						<label>Paste the authorization code for ${PROVIDER_LABELS[this.pendingCodeProvider]}</label>
+						<span class="hint">Authorize in the popup window, then copy the code shown on the page and paste it below.</span>
+						<div class="code-input-row">
+							<input
+								id="oauth-code-input"
+								type="text"
+								placeholder="Paste authorization code here"
+								@keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this.handleCodeSubmit(); }}
+							/>
+							<button class="btn-primary" @click=${() => this.handleCodeSubmit()}>Submit</button>
+							<button class="btn-cancel" @click=${() => this.handleCodeCancel()}>Cancel</button>
+						</div>
+					</div>
+				`
 				: null}
 
 			${this.loading

@@ -78,8 +78,10 @@ export class RemoteAgent {
 	setModel(m: Model<any>): void {
 		// Update local state optimistically
 		this._state.model = m;
-		// Send to remote
-		this.send({ type: "set_model", provider: m.provider, modelId: m.id });
+		// Send as a tracked command so the response doesn't trigger showError
+		this.sendCommand({ type: "set_model", provider: m.provider, modelId: m.id }).catch((err) => {
+			console.warn(`[RemoteAgent] set_model rejected: ${err.message}`);
+		});
 	}
 
 	setThinkingLevel(l: ThinkingLevel): void {

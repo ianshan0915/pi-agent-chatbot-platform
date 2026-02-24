@@ -70,27 +70,20 @@ export class OAuthService {
 			throw new Error("Cannot specify both userId and teamId");
 		}
 
-		// Encrypt tokens
-		const refreshEnvelope = this.crypto.encrypt(credentials.refresh);
-		const accessEnvelope = this.crypto.encrypt(credentials.access);
+		// Encrypt both tokens as a single blob so they share the same DEK/IV.
+		// The encrypted_refresh column stores the combined blob; encrypted_access
+		// is set to an empty buffer (kept for schema compatibility).
+		const combined = JSON.stringify({ refresh: credentials.refresh, access: credentials.access });
+		const envelope = this.crypto.encrypt(combined);
 
-		// Both tokens should use the same IV for the envelope
 		const expiresAt = new Date(credentials.expires);
 
+		const conflictColumn = options.userId ? "user_id" : "team_id";
 		const result = await this.db.query(
 			`INSERT INTO oauth_credentials
 			 (user_id, team_id, provider, encrypted_dek, encrypted_refresh, encrypted_access, iv, expires_at, key_version)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-			 ON CONFLICT (user_id, provider) WHERE user_id IS NOT NULL
-			 DO UPDATE SET
-			   encrypted_dek = $4,
-			   encrypted_refresh = $5,
-			   encrypted_access = $6,
-			   iv = $7,
-			   expires_at = $8,
-			   key_version = $9,
-			   updated_at = now()
-			 ON CONFLICT (team_id, provider) WHERE team_id IS NOT NULL
+			 ON CONFLICT (${conflictColumn}, provider)
 			 DO UPDATE SET
 			   encrypted_dek = $4,
 			   encrypted_refresh = $5,
@@ -104,12 +97,12 @@ export class OAuthService {
 				options.userId || null,
 				options.teamId || null,
 				provider,
-				refreshEnvelope.encryptedDek,
-				refreshEnvelope.encryptedData,
-				accessEnvelope.encryptedData,
-				refreshEnvelope.iv,
+				envelope.encryptedDek,
+				envelope.encryptedData,
+				Buffer.alloc(0),
+				envelope.iv,
 				expiresAt,
-				refreshEnvelope.keyVersion,
+				envelope.keyVersion,
 			],
 		);
 
@@ -149,20 +142,15 @@ export class OAuthService {
 
 		const row = result.rows[0];
 
-		// Decrypt tokens
-		const refresh = this.crypto.decrypt({
+		// Decrypt combined token blob (stored in encrypted_refresh column)
+		const combined = this.crypto.decrypt({
 			encryptedDek: row.encrypted_dek,
 			encryptedData: row.encrypted_refresh,
 			iv: row.iv,
 			keyVersion: row.key_version,
 		});
 
-		const access = this.crypto.decrypt({
-			encryptedDek: row.encrypted_dek,
-			encryptedData: row.encrypted_access,
-			iv: row.iv,
-			keyVersion: row.key_version,
-		});
+		const { refresh, access } = JSON.parse(combined) as { refresh: string; access: string };
 
 		return {
 			refresh,
@@ -184,10 +172,9 @@ export class OAuthService {
 			return null;
 		}
 
-		// Use pi-ai's built-in refresh logic
-		const result = await getOAuthApiKey(provider, credentials);
+		// Use pi-ai's built-in refresh logic (expects a Record keyed by provider ID)
+		const result = await getOAuthApiKey(provider, { [provider]: credentials });
 		if (!result) {
-			console.error(`[oauth-service] Failed to get API key for provider=${provider}`);
 			return null;
 		}
 

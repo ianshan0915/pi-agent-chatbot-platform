@@ -82,7 +82,7 @@ async function main() {
 			contentSecurityPolicy: {
 				directives: {
 					defaultSrc: ["'self'"],
-					scriptSrc: ["'self'", ...(isDev ? ["'unsafe-eval'"] : [])],
+					scriptSrc: ["'self'", ...(isDev ? ["'unsafe-eval'", "'unsafe-inline'"] : [])],
 					styleSrc: ["'self'", "'unsafe-inline'"],
 					imgSrc: ["'self'", "data:", "blob:"],
 					connectSrc: ["'self'", "ws:", "wss:"],
@@ -90,6 +90,7 @@ async function main() {
 					fontSrc: ["'self'"],
 					objectSrc: ["'none'"],
 					frameAncestors: ["'none'"],
+					...(isDev ? { scriptSrcAttr: ["'unsafe-inline'"] } : {}),
 				},
 			},
 			hsts: { maxAge: 31536000, includeSubDomains: true },
