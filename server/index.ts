@@ -374,7 +374,7 @@ async function main() {
 		app.use(express.static(distPath));
 
 		// SPA fallback — but not for /api/* routes
-		app.get("*", (_req, res) => {
+		app.get("/{*path}", (_req, res) => {
 			res.sendFile(path.join(distPath, "index.html"));
 		});
 
