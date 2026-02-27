@@ -116,6 +116,8 @@ interface AgentProfileInfo {
 }
 let agentProfiles: AgentProfileInfo[] = [];
 let currentAgentProfileId: string | undefined;
+let currentModelId: string | undefined;
+let currentProvider: string | undefined;
 
 // ============================================================================
 // Storage setup (ApiStorageBackend replaces IndexedDB)
@@ -387,11 +389,28 @@ function getWsUrl(): string {
 	if (currentAgentProfileId) {
 		url += `&agentProfileId=${encodeURIComponent(currentAgentProfileId)}`;
 	}
+	if (currentProvider) {
+		url += `&provider=${encodeURIComponent(currentProvider)}`;
+	}
+	if (currentModelId) {
+		url += `&model=${encodeURIComponent(currentModelId)}`;
+	}
 	return url;
+}
+
+function trackCurrentModel(): void {
+	const model = remoteAgent?.state.model;
+	if (model?.id) {
+		currentModelId = model.id;
+		currentProvider = model.provider;
+	}
 }
 
 function onAgentEvent(event: AgentEvent): void {
 	const messages = remoteAgent!.state.messages;
+
+	// Track model changes (e.g. user switches model mid-session)
+	trackCurrentModel();
 
 	// Generate title after first successful response
 	if (!currentTitle && shouldSaveSession(messages)) {
@@ -462,6 +481,7 @@ async function onWebSocketOpen(): Promise<void> {
 
 	try {
 		await remoteAgent.syncState();
+		trackCurrentModel();
 		chatPanel.agentInterface?.requestUpdate();
 		remoteAgent.fetchMessages().catch((err) => {
 			console.error("Failed to fetch messages:", err);
@@ -598,6 +618,8 @@ function selectAgentProfile(profileId: string | undefined): void {
 	currentAgentProfileId = profileId;
 	currentSessionId = undefined;
 	currentTitle = "";
+	currentModelId = undefined;
+	currentProvider = undefined;
 	chatPanel?.artifactsPanel?.clear();
 	fetchedFileRefs.clear();
 
