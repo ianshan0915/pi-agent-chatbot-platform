@@ -175,12 +175,13 @@ export class TenantBridge extends WsBridge {
 		// Issue memory token for the extension to authenticate internal API calls
 		this.memoryToken = issueMemoryToken(this.user.userId, this.user.teamId);
 
-		// Audit log: record key decryption for each provider (non-blocking)
-		for (const key of Object.keys(envKeys)) {
+		// Audit log: batch INSERT all provider key decryptions (non-blocking)
+		const providers = Object.keys(envKeys);
+		if (providers.length > 0) {
+			const values = providers.map((_, i) => `($1, $2, $${i + 3}, 'decrypt')`).join(", ");
 			this.db.query(
-				`INSERT INTO provider_key_audit_log (team_id, user_id, provider, action)
-				 VALUES ($1, $2, $3, 'decrypt')`,
-				[this.user.teamId, this.user.userId, key],
+				`INSERT INTO provider_key_audit_log (team_id, user_id, provider, action) VALUES ${values}`,
+				[this.user.teamId, this.user.userId, ...providers],
 			).catch(() => {});
 		}
 
@@ -340,10 +341,20 @@ export class TenantBridge extends WsBridge {
 		this.rl.on("line", (line: string) => {
 			if (this.closed) return;
 			try {
-				const parsed = JSON.parse(line);
-				console.log(`[rpc→ws] ${parsed.type || "unknown"}${parsed.command ? ` (${parsed.command})` : ""}`);
-				if (parsed.type === "message_end" && parsed.message?.stopReason === "error") {
-					console.error(`[rpc→ws] ERROR: ${parsed.message?.errorMessage || JSON.stringify(parsed.message)}`);
+				// Only parse JSON when we need it (debug logging or error detection).
+				// In production, forward the raw line without parsing every streaming token.
+				if (process.env.LOG_LEVEL === "debug") {
+					const parsed = JSON.parse(line);
+					console.log(`[rpc→ws] ${parsed.type || "unknown"}${parsed.command ? ` (${parsed.command})` : ""}`);
+				}
+				// Always check for errors (fast indexOf check avoids parsing most lines)
+				if (line.includes('"stopReason":"error"')) {
+					try {
+						const parsed = JSON.parse(line);
+						if (parsed.type === "message_end" && parsed.message?.stopReason === "error") {
+							console.error(`[rpc→ws] ERROR: ${parsed.message?.errorMessage || JSON.stringify(parsed.message)}`);
+						}
+					} catch { /* non-critical */ }
 				}
 				this.ws.send(line);
 			} catch {

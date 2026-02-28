@@ -6,16 +6,10 @@
  * Admins can manage platform/team skills.
  */
 
+import { apiFetch } from "../shared/api.js";
 import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-
-interface SkillInfo {
-	id: string;
-	scope: string;
-	name: string;
-	description: string;
-	created_at: string;
-}
+import type { SkillInfo } from "../studio/types.js";
 
 @customElement("skills-panel")
 export class SkillsPanel extends LitElement {
@@ -180,17 +174,7 @@ export class SkillsPanel extends LitElement {
 		this.loadSkills();
 	}
 
-	private async fetchApi(url: string, options: RequestInit = {}): Promise<any> {
-		const token = this.getToken?.();
-		const res = await fetch(url, {
-			...options,
-			headers: {
-				...(token ? { Authorization: `Bearer ${token}` } : {}),
-				...options.headers,
-			},
-		});
-		return res.json();
-	}
+	private fetchApi = (url: string, options?: RequestInit) => apiFetch(url, options, this.getToken);
 
 	private async loadSkills() {
 		this.loading = true;

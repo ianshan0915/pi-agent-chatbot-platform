@@ -97,16 +97,16 @@ export class AgentExecutor {
 			}
 		}
 
-		// OAuth credentials (override team keys)
+		// OAuth credentials (override team keys) — batch all providers in parallel
 		const oauthService = new OAuthService(this.db.pool, this.crypto);
-		for (const [providerId, envVar] of Object.entries(OAUTH_PROVIDER_ENV_MAP)) {
-			try {
-				const apiKey = await oauthService.getApiKey(providerId as any, { userId });
-				if (apiKey) {
-					env[envVar] = apiKey;
-				}
-			} catch {
-				// No OAuth credentials for this provider — ignore
+		const oauthEntries = Object.entries(OAUTH_PROVIDER_ENV_MAP);
+		const oauthResults = await Promise.allSettled(
+			oauthEntries.map(([providerId]) => oauthService.getApiKey(providerId as any, { userId })),
+		);
+		for (let i = 0; i < oauthEntries.length; i++) {
+			const result = oauthResults[i];
+			if (result.status === "fulfilled" && result.value) {
+				env[oauthEntries[i][1]] = result.value;
 			}
 		}
 
@@ -122,13 +122,14 @@ export class AgentExecutor {
 			[fileIds],
 		);
 
-		const paths: string[] = [];
-		for (const file of fileResult.rows) {
-			const filePath = path.join(targetDir, file.filename);
-			const data = await this.storage.download(file.storage_key);
-			await fs.writeFile(filePath, data);
-			paths.push(filePath);
-		}
+		const paths = await Promise.all(
+			fileResult.rows.map(async (file) => {
+				const filePath = path.join(targetDir, file.filename);
+				const data = await this.storage.download(file.storage_key);
+				await fs.writeFile(filePath, data);
+				return filePath;
+			}),
+		);
 		return paths;
 	}
 
@@ -136,22 +137,22 @@ export class AgentExecutor {
 	 * Full spawn: resolve keys + skills + files → spawn pi --mode rpc.
 	 */
 	async spawn(opts: SpawnOptions): Promise<SpawnResult> {
-		// 1. Build environment
-		const extraEnv = await this.buildEnv(opts.userId, opts.teamId);
-
-		// 2. Resolve skills
-		const resolvedSkills = await resolveSkillsForUser(
-			this.db, this.storage, opts.userId, opts.teamId,
-		);
-
-		// 3. Download files if needed
-		let tempFilesDir: string | null = null;
-		const filePaths: string[] = [];
-		if (opts.fileIds && opts.fileIds.length > 0) {
-			tempFilesDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-task-files-"));
-			const downloaded = await this.downloadFiles(opts.fileIds, tempFilesDir);
-			filePaths.push(...downloaded);
-		}
+		// Run independent prep steps in parallel
+		const [extraEnv, resolvedSkills, { tempFilesDir, filePaths }] = await Promise.all([
+			// 1. Build environment
+			this.buildEnv(opts.userId, opts.teamId),
+			// 2. Resolve skills
+			resolveSkillsForUser(this.db, this.storage, opts.userId, opts.teamId),
+			// 3. Download files if needed
+			(async () => {
+				if (opts.fileIds && opts.fileIds.length > 0) {
+					const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-task-files-"));
+					const paths = await this.downloadFiles(opts.fileIds, dir);
+					return { tempFilesDir: dir, filePaths: paths };
+				}
+				return { tempFilesDir: null as string | null, filePaths: [] as string[] };
+			})(),
+		]);
 
 		// 4. Build command args
 		const { command, commandArgs } = resolvePiCommand();
