@@ -82,6 +82,7 @@ let reconnectDelay = 1000; // Exponential backoff: 1s → 2s → 4s → ... → 
 const MAX_RECONNECT_DELAY = 30_000;
 let saveSessionTimer: ReturnType<typeof setTimeout> | undefined;
 let intentionalDisconnect = false; // Suppress reconnect on intentional disconnect
+let pendingSessionMessages: AgentMessage[] | null = null; // Messages to restore after WS reconnect
 
 // Cache tool call arguments for detecting renderable file writes
 const pendingToolArgs = new Map<string, { toolName: string; args: any }>();
@@ -234,28 +235,30 @@ const loadSession = async (sessionId: string): Promise<boolean> => {
 	}
 
 	const metadata = await storage.sessions.getMetadata(sessionId);
-	currentSessionId = sessionId;
-	currentTitle = metadata?.title || "";
-	// Restore agent profile from session metadata
-	currentAgentProfileId = (metadata as any)?.agentProfileId || undefined;
 
-	// Load saved messages without resetting the server
-	// (Server can't restore old context, but we can show read-only history)
-	if (remoteAgent) {
-		// Use the public method to load messages and notify UI
-		remoteAgent.loadMessagesFromStorage(sessionData.messages);
-
-		// Force UI components to re-render with loaded messages
-		if (chatPanel?.agentInterface) {
-			chatPanel.agentInterface.requestUpdate();
-		}
-
-		// Clear previous session's artifacts, then reconstruct from loaded messages
-		chatPanel?.artifactsPanel?.clear();
-		fetchedFileRefs.clear();
-		reconstructFileArtifactsFromMessages(sessionData.messages);
+	// Save current session before switching (if there's anything to save)
+	clearTimeout(saveSessionTimer);
+	if (currentSessionId && remoteAgent) {
+		saveSession();
 	}
 
+	// Store messages to restore after WebSocket reconnects
+	pendingSessionMessages = sessionData.messages;
+
+	// Disconnect old WebSocket cleanly (listeners removed, no stale reconnects)
+	disconnectWebSocket();
+
+	// Update state for the new session
+	currentSessionId = sessionId;
+	currentTitle = metadata?.title || "";
+	currentAgentProfileId = (metadata as any)?.agentProfileId || undefined;
+	currentModelId = undefined;
+	currentProvider = undefined;
+	chatPanel?.artifactsPanel?.clear();
+	fetchedFileRefs.clear();
+
+	// Reconnect — the URL will include the sessionId + agentProfileId
+	connectWebSocket();
 	renderApp();
 	return true;
 };
@@ -479,13 +482,28 @@ async function onWebSocketOpen(): Promise<void> {
 
 	renderApp();
 
+	// Restore messages from a previous session if switching via sidebar
+	const restoredFromStorage = pendingSessionMessages != null;
+	if (pendingSessionMessages) {
+		const messages = pendingSessionMessages;
+		pendingSessionMessages = null;
+
+		remoteAgent.loadMessagesFromStorage(messages);
+		if (chatPanel?.agentInterface) {
+			chatPanel.agentInterface.requestUpdate();
+		}
+		reconstructFileArtifactsFromMessages(messages);
+	}
+
 	try {
 		await remoteAgent.syncState();
 		trackCurrentModel();
 		chatPanel.agentInterface?.requestUpdate();
-		remoteAgent.fetchMessages().catch((err) => {
-			console.error("Failed to fetch messages:", err);
-		});
+		if (!restoredFromStorage) {
+			remoteAgent.fetchMessages().catch((err) => {
+				console.error("Failed to fetch messages:", err);
+			});
+		}
 	} catch (err) {
 		console.error("Failed to sync initial state:", err);
 	}

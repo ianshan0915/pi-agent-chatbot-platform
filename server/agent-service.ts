@@ -64,6 +64,7 @@ export class TenantBridge extends WsBridge {
 	private tempSystemPromptFile: string | null = null;
 	private pendingMessages: string[] = [];
 	private ready = false;
+	private conversationHistory: Array<{ role: string; content: any }> | null = null;
 
 	constructor(ws: WebSocket, options: TenantBridgeOptions) {
 		super(ws, options);
@@ -150,6 +151,23 @@ export class TenantBridge extends WsBridge {
 				.catch(err => {
 					console.error("[tenant-bridge] Failed to resolve memories:", err);
 				}),
+
+			// 6. Fetch conversation history for existing sessions
+			(this.sessionId
+				? this.db.query<{ role: string; content: any }>(
+					`SELECT role, content FROM messages
+					 WHERE session_id = $1 ORDER BY ordinal ASC LIMIT 50`,
+					[this.sessionId],
+				).then(result => {
+					if (result.rows.length > 0) {
+						this.conversationHistory = result.rows;
+						console.log(`[tenant-bridge] Fetched ${result.rows.length} history message(s) for session ${this.sessionId}`);
+					}
+				}).catch(err => {
+					console.error("[tenant-bridge] Failed to fetch conversation history:", err);
+				})
+				: Promise.resolve()
+			),
 		]);
 
 		Object.assign(this.extraEnv, envKeys);
@@ -164,6 +182,26 @@ export class TenantBridge extends WsBridge {
 				 VALUES ($1, $2, $3, 'decrypt')`,
 				[this.user.teamId, this.user.userId, key],
 			).catch(() => {});
+		}
+
+		// Inject conversation history into system prompt for session continuity
+		if (this.conversationHistory && this.conversationHistory.length > 0) {
+			const historyBlock = this.formatConversationHistory(this.conversationHistory);
+			if (this.tempSystemPromptFile) {
+				// Append to existing system prompt file
+				const existing = await fs.readFile(this.tempSystemPromptFile, "utf-8");
+				await fs.writeFile(this.tempSystemPromptFile, existing + "\n\n" + historyBlock);
+			} else {
+				// Create a new append-system-prompt file
+				const promptFile = path.join(os.tmpdir(), `pi-history-${randomUUID()}.md`);
+				await fs.writeFile(promptFile, historyBlock);
+				this.tempSystemPromptFile = promptFile;
+				// Mark that this is an append prompt (not a replacement)
+				if (!this.options.systemPrompt) {
+					this.options.appendSystemPrompt = historyBlock;
+				}
+			}
+			console.log(`[tenant-bridge] Injected ${this.conversationHistory.length} history messages into system prompt`);
 		}
 
 		// 5. Check for existing process (reconnection)
@@ -385,6 +423,36 @@ export class TenantBridge extends WsBridge {
 			success: false,
 			error: "API keys are managed by your team admin via the Provider Keys settings.",
 		}));
+	}
+
+	/**
+	 * Format conversation history rows into a text block for the system prompt.
+	 */
+	private formatConversationHistory(rows: Array<{ role: string; content: any }>): string {
+		const lines: string[] = ["## Previous Conversation", ""];
+		for (const row of rows) {
+			const label = row.role === "user" || row.role === "user-with-attachments" ? "User" : "Assistant";
+			const text = this.extractTextFromContent(row.content);
+			if (text) {
+				lines.push(`${label}: ${text}`);
+			}
+		}
+		return lines.join("\n");
+	}
+
+	/**
+	 * Extract plain text from a message content field (string or JSONB array).
+	 */
+	private extractTextFromContent(content: any): string {
+		if (typeof content === "string") return content.trim();
+		if (Array.isArray(content)) {
+			return content
+				.filter((block: any) => block.type === "text")
+				.map((block: any) => block.text || "")
+				.join(" ")
+				.trim();
+		}
+		return "";
 	}
 
 	/**
