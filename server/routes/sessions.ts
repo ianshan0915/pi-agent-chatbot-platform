@@ -118,7 +118,7 @@ router.patch("/:id", asyncRoute(async (req, res) => {
 	if (!session) return;
 
 	const db = getDatabase();
-	const { title, modelId, provider, thinkingLevel } = req.body;
+	const { title, modelId, provider, thinkingLevel, artifactsCache } = req.body;
 
 	const result = await db.query<SessionRow>(
 		`UPDATE sessions
@@ -126,6 +126,7 @@ router.patch("/:id", asyncRoute(async (req, res) => {
 		     model_id = COALESCE($2, model_id),
 		     provider = COALESCE($3, provider),
 		     thinking_level = COALESCE($4, thinking_level),
+		     artifacts_cache = COALESCE($6, artifacts_cache),
 		     last_modified = NOW()
 		 WHERE id = $5
 		 RETURNING *`,
@@ -135,6 +136,7 @@ router.patch("/:id", asyncRoute(async (req, res) => {
 			provider ?? null,
 			thinkingLevel ?? null,
 			session.id,
+			artifactsCache ? JSON.stringify(artifactsCache) : null,
 		],
 	);
 

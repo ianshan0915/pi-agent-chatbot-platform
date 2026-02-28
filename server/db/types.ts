@@ -44,6 +44,7 @@ export interface SessionRow {
 	message_count: number;
 	preview: string;
 	agent_profile_id: string | null;
+	artifacts_cache: Record<string, string>;
 	deleted_at: Date | null;
 	created_at: Date;
 	last_modified: Date;

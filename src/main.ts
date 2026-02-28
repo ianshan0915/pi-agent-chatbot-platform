@@ -83,6 +83,7 @@ const MAX_RECONNECT_DELAY = 30_000;
 let saveSessionTimer: ReturnType<typeof setTimeout> | undefined;
 let intentionalDisconnect = false; // Suppress reconnect on intentional disconnect
 let pendingSessionMessages: AgentMessage[] | null = null; // Messages to restore after WS reconnect
+let pendingArtifactsCache: Record<string, string> | null = null; // Cached binary artifact content to restore
 
 // Cache tool call arguments for detecting renderable file writes
 const pendingToolArgs = new Map<string, { toolName: string; args: any }>();
@@ -186,6 +187,18 @@ const saveSession = async () => {
 	if (!shouldSaveSession(state.messages)) return;
 
 	try {
+		// Capture binary artifact content (PPTX slides, etc.) for persistence
+		const artifactsCache: Record<string, string> = {};
+		const panel = chatPanel?.artifactsPanel;
+		if (panel) {
+			for (const [filename, artifact] of panel.artifacts) {
+				const ext = filename.split(".").pop()?.toLowerCase();
+				if (ext && BINARY_EXTENSIONS.has(ext) && artifact.content) {
+					artifactsCache[filename] = artifact.content;
+				}
+			}
+		}
+
 		const sessionData = {
 			id: currentSessionId,
 			title: currentTitle,
@@ -195,6 +208,7 @@ const saveSession = async () => {
 			agentProfileId: currentAgentProfileId || null,
 			createdAt: new Date().toISOString(),
 			lastModified: new Date().toISOString(),
+			...(Object.keys(artifactsCache).length > 0 ? { artifactsCache } : {}),
 		};
 
 		const metadata = {
@@ -242,8 +256,9 @@ const loadSession = async (sessionId: string): Promise<boolean> => {
 		saveSession();
 	}
 
-	// Store messages to restore after WebSocket reconnects
+	// Store messages and artifact cache to restore after WebSocket reconnects
 	pendingSessionMessages = sessionData.messages;
+	pendingArtifactsCache = (sessionData as any).artifactsCache ?? null;
 
 	// Disconnect old WebSocket cleanly (listeners removed, no stale reconnects)
 	disconnectWebSocket();
@@ -486,13 +501,15 @@ async function onWebSocketOpen(): Promise<void> {
 	const restoredFromStorage = pendingSessionMessages != null;
 	if (pendingSessionMessages) {
 		const messages = pendingSessionMessages;
+		const cachedArtifacts = pendingArtifactsCache;
 		pendingSessionMessages = null;
+		pendingArtifactsCache = null;
 
 		remoteAgent.loadMessagesFromStorage(messages);
 		if (chatPanel?.agentInterface) {
 			chatPanel.agentInterface.requestUpdate();
 		}
-		reconstructFileArtifactsFromMessages(messages);
+		reconstructFileArtifactsFromMessages(messages, cachedArtifacts ?? undefined);
 	}
 
 	try {
@@ -697,7 +714,10 @@ async function fetchAndCreateFileArtifact(filePath: string) {
 }
 
 /** Scan messages for renderable file writes and reconstruct artifacts */
-async function reconstructFileArtifactsFromMessages(messages: AgentMessage[]) {
+async function reconstructFileArtifactsFromMessages(
+	messages: AgentMessage[],
+	artifactsCache?: Record<string, string>,
+) {
 	const panel = chatPanel?.artifactsPanel;
 	if (!panel) return;
 
@@ -711,7 +731,12 @@ async function reconstructFileArtifactsFromMessages(messages: AgentMessage[]) {
 			const content = getContentFromArgs(args);
 			const ext = filePath?.split(".").pop()?.toLowerCase();
 			if (filePath && (ext === "pptx" || ext === "ppt")) {
-				await fetchAndCreateFileArtifact(filePath);
+				const filename = filePath.split("/").pop() || filePath;
+				if (artifactsCache && artifactsCache[filename]) {
+					await createFileArtifact(filePath, artifactsCache[filename]);
+				} else {
+					await fetchAndCreateFileArtifact(filePath);
+				}
 				trackDirFromPath(filePath);
 			} else if (filePath && content) {
 				await createFileArtifact(filePath, content);

@@ -212,6 +212,7 @@ export class ApiStorageBackend implements StorageBackend {
 					messages,
 					lastModified: session.last_modified,
 					messageCount: session.message_count,
+					artifactsCache: session.artifacts_cache ?? {},
 				};
 
 				store.set(key, sessionData);
@@ -315,6 +316,9 @@ export class ApiStorageBackend implements StorageBackend {
 							thinkingLevel: data.thinkingLevel,
 							modelId: data.modelId,
 							provider: data.provider,
+							...(data.artifactsCache && Object.keys(data.artifactsCache).length > 0
+								? { artifactsCache: data.artifactsCache }
+								: {}),
 						}),
 					}).catch((err) => {
 						if (err.message?.includes("404")) {
