@@ -32,6 +32,7 @@ import { createJobsRouter } from "./routes/jobs.js";
 import { createTasksRouter } from "./routes/tasks.js";
 import { createAgentProfilesRouter } from "./routes/agent-profiles.js";
 import { createMemoryRouter } from "./routes/memory.js";
+import { createTeamMembersRouter } from "./routes/team-members.js";
 import { requireAuth } from "./auth/middleware.js";
 import { createCryptoService } from "./services/crypto.js";
 import { ProcessPool } from "./services/process-pool.js";
@@ -163,6 +164,7 @@ async function main() {
 	app.use("/api/tasks", apiRateLimit, createTasksRouter(storageService, crypto, taskQueueService));
 	app.use("/api/agent-profiles", apiRateLimit, createAgentProfilesRouter(agentExecutor));
 	app.use("/api/memory", apiRateLimit, createMemoryRouter());
+	app.use("/api/team-members", apiRateLimit, createTeamMembersRouter());
 
 	// Read files from the agent's working directory (for rendering artifacts)
 	app.get("/api/agent-files", requireAuth, apiRateLimit, async (req, res) => {
@@ -269,7 +271,23 @@ async function main() {
 		if (url.searchParams.has("provider")) options.provider = url.searchParams.get("provider")!;
 		if (url.searchParams.has("model")) options.model = url.searchParams.get("model")!;
 
-		const sessionId = url.searchParams.get("sessionId") || undefined;
+		let sessionId = url.searchParams.get("sessionId") || undefined;
+
+		// Validate session ownership before allowing reconnection
+		if (sessionId) {
+			const sessionResult = await db.query<{ user_id: string }>(
+				"SELECT user_id FROM sessions WHERE id = $1 AND deleted_at IS NULL",
+				[sessionId],
+			);
+			if (sessionResult.rows.length === 0) {
+				// Session doesn't exist — let it proceed as a new session
+				sessionId = undefined;
+			} else if (sessionResult.rows[0].user_id !== user.userId) {
+				console.warn(`[server] User ${user.userId} attempted to access session ${sessionId} owned by ${sessionResult.rows[0].user_id}`);
+				ws.close(4003, "Session not owned by authenticated user");
+				return;
+			}
+		}
 
 		// Track CWD for agent-files endpoint
 		if (options.cwd) {

@@ -20,6 +20,7 @@ import {
 	SessionsStore,
 	SettingsDialog,
 	SettingsStore,
+	SettingsTab,
 	setAppStorage,
 } from "./web-ui/index.js";
 import type { SessionMetadata } from "./web-ui/index.js";
@@ -31,6 +32,7 @@ import "./components/SchedulerPanel.js";
 import "./components/TasksDashboard.js";
 import "./components/AgentProfilesPanel.js";
 import "./components/MemoryPanel.js";
+import { TeamMembersTab } from "./components/TeamMembersPanel.js";
 import { html, render, nothing } from "lit";
 import {
 	Bot,
@@ -92,7 +94,7 @@ let lastKnownDir = "";
 // Track files we've already attempted to fetch (avoid duplicate fetches)
 const fetchedFileRefs = new Set<string>();
 
-import { RENDERABLE_EXTENSIONS, BINARY_EXTENSIONS } from "./shared/file-extensions.js";
+import { RENDERABLE_EXTENSIONS, BINARY_EXTENSIONS, ARTIFACT_AUTO_DETECT_EXTENSIONS } from "./shared/file-extensions.js";
 
 // Sidebar & dropdown state
 let sidebarOpen = true;
@@ -666,13 +668,19 @@ function selectAgentProfile(profileId: string | undefined): void {
 // File artifact detection helpers
 // ============================================================================
 
-/** Extract renderable file path from tool args (supports various arg shapes) */
+/** Extract renderable file path from tool args (supports various arg shapes).
+ *  Only returns paths for "final output" file types (documents, images, rich visuals).
+ *  Filters out temp/skill files to keep the artifacts panel clean. */
 function getRenderablePathFromArgs(args: any): string | null {
 	if (!args || typeof args !== "object") return null;
 	const filePath = args.path || args.filePath || args.file_path || args.filename || "";
 	if (typeof filePath !== "string" || filePath.length === 0) return null;
+	// Skip files in temp directories (skill files, system prompt files, etc.)
+	if (filePath.startsWith("/tmp/") || filePath.includes("/pi-skills-") || filePath.includes("/pi-sysprompt-")) {
+		return null;
+	}
 	const ext = filePath.split(".").pop()?.toLowerCase();
-	if (ext && RENDERABLE_EXTENSIONS.has(ext)) {
+	if (ext && ARTIFACT_AUTO_DETECT_EXTENSIONS.has(ext)) {
 		return filePath;
 	}
 	return null;
@@ -1230,7 +1238,14 @@ const renderApp = () => {
 									<div class="px-3 py-2 text-xs text-muted-foreground border-b border-border">${user?.email || ""}</div>
 									<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer" @click=${() => {
 										userMenuOpen = false;
-										SettingsDialog.open([new ProvidersModelsTab(), new ProxyTab()]);
+										const tabs: SettingsTab[] = [new ProvidersModelsTab(), new ProxyTab()];
+										if (user?.role === "admin") {
+											const t = new TeamMembersTab();
+											t.getToken = () => authClient.token;
+											t.currentUserId = user?.userId || "";
+											tabs.push(t);
+										}
+										SettingsDialog.open(tabs);
 										renderApp();
 									}}>
 										${icon(Settings, "sm")}
