@@ -50,6 +50,7 @@ import {
 	Plus,
 	Puzzle,
 	Settings,
+	Square,
 	Trash2,
 	Wrench,
 } from "lucide";
@@ -95,6 +96,11 @@ let lastKnownDir = "";
 const fetchedFileRefs = new Set<string>();
 
 import { RENDERABLE_EXTENSIONS, BINARY_EXTENSIONS, ARTIFACT_AUTO_DETECT_EXTENSIONS } from "./shared/file-extensions.js";
+
+// Session status tracking (from SSE)
+type SessionStatus = "generating" | "idle" | "suspended" | "dead";
+let sessionStatusMap = new Map<string, SessionStatus>();
+let sessionStatusEventSource: EventSource | null = null;
 
 // Sidebar & dropdown state
 let sidebarOpen = true;
@@ -278,6 +284,17 @@ const loadSession = async (sessionId: string): Promise<boolean> => {
 	connectWebSocket();
 	renderApp();
 	return true;
+};
+
+const abortSession = async (sessionId: string) => {
+	try {
+		await fetch("/api/sessions/" + sessionId + "/abort", {
+			method: "POST",
+			headers: { Authorization: "Bearer " + authClient.token },
+		});
+	} catch (err) {
+		console.error("Failed to abort session:", err);
+	}
 };
 
 const deleteSession = async (sessionId: string) => {
@@ -540,6 +557,19 @@ function onWebSocketClose(event: CloseEvent): void {
 		return;
 	}
 
+	// Handle generating limit exceeded — no auto-reconnect
+	if (event.code === 4031) {
+		wsConnected = false;
+		remoteAgent = null;
+		if (agentUnsubscribe) {
+			agentUnsubscribe();
+			agentUnsubscribe = undefined;
+		}
+		alert("You have 3 sessions actively running. Stop one before starting another.");
+		renderApp();
+		return;
+	}
+
 	clearTimeout(saveSessionTimer);
 	if (currentSessionId && remoteAgent) {
 		saveSession();
@@ -662,6 +692,69 @@ function selectAgentProfile(profileId: string | undefined): void {
 
 	connectWebSocket();
 	renderApp();
+}
+
+// ============================================================================
+// Session status SSE subscription
+// ============================================================================
+
+function initSessionStatusSSE(): void {
+	if (sessionStatusEventSource) {
+		sessionStatusEventSource.close();
+		sessionStatusEventSource = null;
+	}
+
+	const connect = async () => {
+		try {
+			// Get SSE ticket
+			const ticketRes = await fetch("/api/auth/sse-ticket", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${authClient.token}` },
+			});
+			if (!ticketRes.ok) return;
+			const ticketData = await ticketRes.json();
+			const ticket = ticketData?.data?.ticket;
+			if (!ticket) return;
+
+			const es = new EventSource(`/api/sessions/events?ticket=${encodeURIComponent(ticket)}`);
+			sessionStatusEventSource = es;
+
+			es.addEventListener("snapshot", (e: MessageEvent) => {
+				try {
+					const snapshot = JSON.parse(e.data) as Record<string, SessionStatus>;
+					sessionStatusMap = new Map(Object.entries(snapshot));
+					renderApp();
+				} catch {}
+			});
+
+			es.addEventListener("session_status", (e: MessageEvent) => {
+				try {
+					const event = JSON.parse(e.data) as { sessionId: string; status: SessionStatus };
+					sessionStatusMap.set(event.sessionId, event.status);
+					renderApp();
+				} catch {}
+			});
+
+			es.onerror = () => {
+				es.close();
+				sessionStatusEventSource = null;
+				// Retry after 5s with new ticket
+				setTimeout(connect, 5000);
+			};
+		} catch {
+			setTimeout(connect, 5000);
+		}
+	};
+
+	connect();
+}
+
+function closeSessionStatusSSE(): void {
+	if (sessionStatusEventSource) {
+		sessionStatusEventSource.close();
+		sessionStatusEventSource = null;
+	}
+	sessionStatusMap.clear();
 }
 
 // ============================================================================
@@ -948,15 +1041,16 @@ const renderApp = () => {
 					<div class="px-3 py-2">
 						<button
 							class="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border border-border hover:bg-muted transition-colors cursor-pointer"
-							@click=${async () => {
-								if (remoteAgent) {
-									currentSessionId = undefined;
-									currentTitle = "";
-									chatPanel?.artifactsPanel?.clear();
-									fetchedFileRefs.clear();
-									await remoteAgent.newSession();
-									renderApp();
-								}
+							@click=${() => {
+								clearTimeout(saveSessionTimer);
+								if (currentSessionId && remoteAgent) saveSession();
+								disconnectWebSocket();
+								currentSessionId = undefined;
+								currentTitle = "";
+								chatPanel?.artifactsPanel?.clear();
+								fetchedFileRefs.clear();
+								connectWebSocket();
+								renderApp();
 							}}
 						>
 							${icon(Plus, "sm")}
@@ -971,13 +1065,33 @@ const renderApp = () => {
 						` : sessionGroups.map((group) => html`
 							<div class="mb-2">
 								<div class="text-xs font-medium text-muted-foreground px-2 py-1">${group.label}</div>
-								${group.sessions.map((session) => html`
+								${group.sessions.map((session) => {
+									const status = sessionStatusMap.get(session.id);
+									const isGenerating = status === "generating";
+									const isIdle = status === "idle";
+									return html`
 									<div
 										class="group flex items-center gap-1 px-2 py-1.5 rounded-md text-sm cursor-pointer transition-colors ${session.id === currentSessionId ? "bg-muted font-medium" : "hover:bg-muted/60"}"
 										@click=${() => loadSession(session.id)}
 									>
-										${icon(MessageSquare, "sm")}
+										<span class="relative shrink-0">
+											${icon(MessageSquare, "sm")}
+											${isGenerating ? html`<span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>` : nothing}
+											${isIdle ? html`<span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-orange-400"></span>` : nothing}
+										</span>
 										<span class="flex-1 truncate">${session.title || "Untitled"}</span>
+										${isGenerating && session.id !== currentSessionId ? html`
+											<button
+												class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-orange-500/10 hover:text-orange-500 transition-opacity cursor-pointer"
+												title="Stop generating"
+												@click=${(e: Event) => {
+													e.stopPropagation();
+													abortSession(session.id);
+												}}
+											>
+												${icon(Square, "sm")}
+											</button>
+										` : nothing}
 										<button
 											class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-destructive/10 hover:text-destructive transition-opacity cursor-pointer"
 											title="Delete session"
@@ -986,7 +1100,7 @@ const renderApp = () => {
 											${icon(Trash2, "sm")}
 										</button>
 									</div>
-								`)}
+								`})}
 							</div>
 						`)}
 					</div>
@@ -1298,11 +1412,13 @@ function onAuthSuccess() {
 	fetchSkills();
 	fetchAgentProfiles();
 	loadSidebarSessions();
+	initSessionStatusSSE();
 	renderApp();
 }
 
 function handleLogout() {
 	disconnectWebSocket();
+	closeSessionStatusSSE();
 	storage = null;
 	sidebarSessions = [];
 	currentSessionId = undefined;
@@ -1337,6 +1453,7 @@ async function initApp() {
 			fetchSkills();
 			fetchAgentProfiles();
 			loadSidebarSessions();
+			initSessionStatusSSE();
 		} else {
 			// Token expired/invalid — show login
 			authClient.logout();

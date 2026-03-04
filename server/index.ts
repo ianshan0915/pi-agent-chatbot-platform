@@ -21,7 +21,7 @@ import { createDatabase } from "./db/index.js";
 import { runMigrations } from "./db/migrate.js";
 import { apiRateLimit, authRateLimit } from "./middleware/rate-limit.js";
 import authRouter from "./routes/auth.js";
-import sessionsRouter from "./routes/sessions.js";
+import { createSessionsRouter } from "./routes/sessions.js";
 import settingsRouter from "./routes/settings.js";
 import importRouter from "./routes/import.js";
 import { createProviderKeysRouter } from "./routes/provider-keys.js";
@@ -40,6 +40,8 @@ import { createStorageService } from "./services/storage.js";
 import { AgentExecutor } from "./services/agent-executor.js";
 import { ArtifactCollector } from "./services/artifact-collector.js";
 import { TaskQueueService } from "./services/task-queue.js";
+import { SessionStatusService } from "./services/session-status-service.js";
+import { OutputBufferService } from "./services/output-buffer.js";
 import { TenantBridge, type TenantBridgeOptions } from "./agent-service.js";
 import type { BridgeOptions } from "./ws-bridge.js";
 import type { AgentProfileRow } from "./db/types.js";
@@ -61,6 +63,17 @@ async function main() {
 	const artifactCollector = new ArtifactCollector(db, storageService);
 	const taskQueueService = new TaskQueueService(db, storageService, agentExecutor, artifactCollector);
 	await taskQueueService.start();
+	const sessionStatusService = new SessionStatusService();
+	const outputBufferService = new OutputBufferService(db);
+
+	// Wire process-stopped events to session status service
+	processPool.on("process-stopped", (sessionId: string, reason: string) => {
+		if (reason === "crash" || reason === "shutdown") {
+			sessionStatusService.setStatus(sessionId, "dead", db);
+		} else if (reason === "idle") {
+			sessionStatusService.setStatus(sessionId, "suspended", db);
+		}
+	});
 
 	const app = express();
 
@@ -153,7 +166,7 @@ async function main() {
 
 	// --- API Routes ---
 	app.use("/api/auth", authRateLimit, authRouter);
-	app.use("/api/sessions", requireAuth, apiRateLimit, sessionsRouter);
+	app.use("/api/sessions", apiRateLimit, createSessionsRouter(sessionStatusService, processPool));
 	app.use("/api/settings", requireAuth, apiRateLimit, settingsRouter);
 	app.use("/api/import", requireAuth, apiRateLimit, importRouter);
 	app.use("/api/provider-keys", apiRateLimit, createProviderKeysRouter(crypto));
@@ -349,6 +362,8 @@ async function main() {
 			crypto,
 			db,
 			storage: storageService,
+			sessionStatusService,
+			outputBufferService,
 			profileSkillIds,
 			profileFileIds,
 			agentProfileId,
