@@ -152,12 +152,14 @@ export class TenantBridge extends WsBridge {
 					console.error("[tenant-bridge] Failed to resolve memories:", err);
 				}),
 
-			// 6. Fetch conversation history for existing sessions
+			// 6. Fetch conversation history for existing sessions (scoped to user)
 			(this.sessionId
 				? this.db.query<{ role: string; content: any }>(
-					`SELECT role, content FROM messages
-					 WHERE session_id = $1 ORDER BY ordinal ASC LIMIT 50`,
-					[this.sessionId],
+					`SELECT m.role, m.content FROM messages m
+					 JOIN sessions s ON s.id = m.session_id
+					 WHERE m.session_id = $1 AND s.user_id = $2
+					 ORDER BY m.ordinal ASC LIMIT 50`,
+					[this.sessionId, this.user.userId],
 				).then(result => {
 					if (result.rows.length > 0) {
 						this.conversationHistory = result.rows;
@@ -205,17 +207,19 @@ export class TenantBridge extends WsBridge {
 			console.log(`[tenant-bridge] Injected ${this.conversationHistory.length} history messages into system prompt`);
 		}
 
-		// 5. Check for existing process (reconnection)
+		// 5. Check for existing process (reconnection) — verify user ownership
 		const existingSessionId = this.sessionId;
 		if (existingSessionId) {
 			const existing = this.processPool.get(existingSessionId);
-			if (existing) {
+			if (existing && existing.userId === this.user.userId) {
 				console.log(`[tenant-bridge] Reattaching to existing process for session ${existingSessionId}`);
 				this.process = existing.process;
 				this.processPool.touch(existingSessionId);
 				this.wireUpProcess();
 				this.flushPendingMessages();
 				return;
+			} else if (existing) {
+				console.warn(`[tenant-bridge] User ${this.user.userId} tried to reattach to process owned by ${existing.userId}`);
 			}
 		}
 
