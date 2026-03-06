@@ -230,6 +230,10 @@ export class TenantBridge extends WsBridge {
 			const existing = this.processPool.get(existingSessionId);
 			if (existing && existing.userId === this.user.userId) {
 				console.log(`[tenant-bridge] Reattaching to existing process for session ${existingSessionId}`);
+				// Close the old bridge's readline so it stops consuming stdout
+				existing.detachCleanup?.();
+				existing.detachCleanup = undefined;
+
 				this.process = existing.process;
 				this.processPool.touch(existingSessionId);
 
@@ -246,6 +250,11 @@ export class TenantBridge extends WsBridge {
 					console.error("[tenant-bridge] Failed to flush output buffer:", err);
 				}
 
+				// Notify client this is a reattachment so it can fetch fresh messages
+				try {
+					this.ws.send(JSON.stringify({ type: "session_reattached", sessionId: existingSessionId }));
+				} catch {}
+
 				this.wireUpProcess();
 				this.detached = false;
 				this.flushPendingMessages();
@@ -260,7 +269,7 @@ export class TenantBridge extends WsBridge {
 		}
 
 		// Spawn new process via pool
-		const sessionId = existingSessionId || `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+		const sessionId = existingSessionId || randomUUID();
 		this.sessionId = sessionId;
 
 		const info = this.processPool.acquire({
@@ -388,12 +397,12 @@ export class TenantBridge extends WsBridge {
 		});
 
 		this.rl.on("line", (line: string) => {
-			// Status tracking: detect agent_start and turn_end events
+			// Status tracking: detect agent lifecycle events
 			// Use fast string checks to avoid parsing every streaming token
-			if (line.includes('"agent_start"')) {
+			if (line.includes('"agent_start"') || line.includes('"turn_start"')) {
 				try {
 					const parsed = JSON.parse(line);
-					if (parsed.type === "agent_start" && this.sessionId) {
+					if ((parsed.type === "agent_start" || parsed.type === "turn_start") && this.sessionId) {
 						this.processPool.markGenerating(this.sessionId);
 						this.sessionStatusService.setStatus(this.sessionId, "generating", this.db);
 					}
@@ -480,7 +489,8 @@ export class TenantBridge extends WsBridge {
 			this.db.query(
 				`INSERT INTO messages (id, session_id, ordinal, role, content, stop_reason, usage, created_at)
 				 VALUES ($1, $2, (SELECT COALESCE(MAX(ordinal), -1) + 1 FROM messages WHERE session_id = $2),
-				         $3, $4::jsonb, $5, $6::jsonb, NOW())`,
+				         $3, $4::jsonb, $5, $6::jsonb, NOW())
+				 ON CONFLICT (session_id, ordinal) DO NOTHING`,
 				[
 					randomUUID(),
 					this.sessionId,
@@ -582,19 +592,21 @@ export class TenantBridge extends WsBridge {
 		const processInfo = this.sessionId ? this.processPool.get(this.sessionId) : null;
 		const isGenerating = processInfo?.generating ?? false;
 
-		if (isGenerating) {
-			// Process is actively generating — keep readline alive so output
-			// flows into the detached handler (buffered to DB)
-			console.log(`[tenant-bridge] Detaching (generating) — process stays alive for session ${this.sessionId}`);
-		} else {
-			// Process is idle — close readline and let pool's idle timer handle it
-			this.rl?.close();
-			this.rl = null;
-			if (this.sessionId) {
-				this.processPool.release(this.sessionId);
-			}
-			console.log(`[tenant-bridge] Detaching (idle) — released to pool for session ${this.sessionId}`);
+		// Always keep readline alive during detach so any output (including
+		// from a new turn that starts immediately after turn_end) is buffered.
+		// Store a cleanup callback so a reattaching bridge can close it.
+		if (processInfo) {
+			const rl = this.rl;
+			processInfo.detachCleanup = () => {
+				rl?.close();
+			};
 		}
+
+		if (this.sessionId) {
+			this.processPool.release(this.sessionId);
+		}
+
+		console.log(`[tenant-bridge] Detaching (${isGenerating ? "generating" : "idle"}) — process stays alive for session ${this.sessionId}`);
 
 		// Do NOT clean up temp files — process still references them
 		// Do NOT set closed = true — the rl handler needs to keep running for detached buffering

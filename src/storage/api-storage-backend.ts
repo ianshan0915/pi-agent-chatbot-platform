@@ -464,6 +464,19 @@ export class ApiStorageBackend implements StorageBackend {
 	}
 
 	// -----------------------------------------------------------------------
+	// Cache invalidation
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Remove a single entry from the in-memory cache so the next get()
+	 * fetches fresh data from the server.
+	 */
+	invalidate(storeName: string, key: string): void {
+		const store = this.cache.get(storeName);
+		if (store) store.delete(key);
+	}
+
+	// -----------------------------------------------------------------------
 	// StorageBackend — delete
 	// -----------------------------------------------------------------------
 

@@ -65,6 +65,14 @@ export class RemoteAgent {
 		this.ws.addEventListener("message", (event) => {
 			this.handleMessage(event.data as string);
 		});
+		this.ws.addEventListener("close", () => {
+			// Reject all pending requests so callers fail fast instead of
+			// waiting for the 30s timeout.
+			for (const [id, pending] of this.pendingRequests) {
+				this.pendingRequests.delete(id);
+				pending.reject(new Error("WebSocket closed"));
+			}
+		});
 	}
 
 	// =========================================================================
@@ -320,6 +328,12 @@ export class RemoteAgent {
 			} else {
 				pending.resolve(data);
 			}
+			return;
+		}
+
+		// Handle reattachment notification — fetch fresh messages from server
+		if (data.type === "session_reattached") {
+			this.fetchMessages().catch(() => {});
 			return;
 		}
 

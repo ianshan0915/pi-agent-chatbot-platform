@@ -46,6 +46,7 @@ import {
 	KeyRound,
 	Link,
 	ListTodo,
+	LoaderCircle,
 	LogOut,
 	MessageSquare,
 	PanelLeft,
@@ -201,11 +202,12 @@ const shouldSaveSession = (messages: AgentMessage[]): boolean => {
 	return hasUserMsg && hasAssistantMsg;
 };
 
-const saveSession = async () => {
-	if (!currentSessionId || !remoteAgent || !currentTitle || !storage) return;
+const saveSession = async (force = false) => {
+	if (!currentSessionId || !remoteAgent || !storage) return;
+	if (!force && !currentTitle) return;
 
 	const state = remoteAgent.state;
-	if (!shouldSaveSession(state.messages)) return;
+	if (!force && !shouldSaveSession(state.messages)) return;
 
 	try {
 		// Capture binary artifact content (PPTX slides, etc.) for persistence
@@ -263,6 +265,13 @@ const saveSession = async () => {
 const loadSession = async (sessionId: string): Promise<boolean> => {
 	if (!storage) return false;
 
+	// If the session was running in the background, invalidate the cache
+	// so we fetch fresh data (including messages generated while away)
+	const bgStatus = sessionStatusMap.get(sessionId);
+	if (bgStatus === "generating" || bgStatus === "idle") {
+		(storage.backend as any).invalidate?.("sessions", sessionId);
+	}
+
 	const sessionData = await storage.sessions.get(sessionId);
 	if (!sessionData) {
 		console.error("Session not found:", sessionId);
@@ -271,17 +280,11 @@ const loadSession = async (sessionId: string): Promise<boolean> => {
 
 	const metadata = await storage.sessions.getMetadata(sessionId);
 
-	// Save current session before switching (if there's anything to save)
-	clearTimeout(saveSessionTimer);
-	if (currentSessionId && remoteAgent) {
-		saveSession();
-	}
-
 	// Store messages and artifact cache to restore after WebSocket reconnects
 	pendingSessionMessages = sessionData.messages;
 	pendingArtifactsCache = (sessionData as any).artifactsCache ?? null;
 
-	// Disconnect old WebSocket cleanly (listeners removed, no stale reconnects)
+	// Disconnect old WebSocket cleanly — this flushes any pending session save
 	disconnectWebSocket();
 
 	// Update state for the new session
@@ -653,8 +656,15 @@ async function onWebSocketOpen(): Promise<void> {
 		await remoteAgent.syncState();
 		trackCurrentModel();
 		chatPanel.agentInterface?.requestUpdate();
+		// Fetch messages only for fresh sessions (not restored from storage).
+		// Reattachment to background sessions is handled by the server's
+		// session_reattached signal → RemoteAgent.fetchMessages().
 		if (!restoredFromStorage) {
-			remoteAgent.fetchMessages().catch((err) => {
+			remoteAgent.fetchMessages().then((msgs) => {
+				if (msgs.length > 0) {
+					reconstructFileArtifactsFromMessages(msgs);
+				}
+			}).catch((err) => {
 				console.error("Failed to fetch messages:", err);
 			});
 		}
@@ -717,6 +727,12 @@ function connectWebSocket(): void {
 		return;
 	}
 
+	// Always have a session ID before connecting so the client and server
+	// share the same ID — required for background session reattachment.
+	if (!currentSessionId) {
+		currentSessionId = crypto.randomUUID();
+	}
+
 	ws = new WebSocket(getWsUrl());
 	ws.addEventListener("open", onWebSocketOpen);
 	ws.addEventListener("close", onWebSocketClose);
@@ -725,7 +741,29 @@ function connectWebSocket(): void {
 
 function disconnectWebSocket(): void {
 	clearTimeout(reconnectTimer);
+	// Flush session save so the session exists in the DB before we disconnect —
+	// required for background session reattachment. Use a fallback title if
+	// the agent hasn't responded yet (user switched away very quickly).
 	clearTimeout(saveSessionTimer);
+	saveSessionTimer = undefined;
+	if (currentSessionId && remoteAgent && storage && remoteAgent.state.messages.length > 0) {
+		if (!currentTitle) {
+			const userMsg = remoteAgent.state.messages.find(
+				(m: any) => m.role === "user" || m.role === "user-with-attachments",
+			);
+			if (userMsg) {
+				const text = typeof userMsg.content === "string"
+					? userMsg.content
+					: Array.isArray(userMsg.content)
+						? userMsg.content.filter((c: any) => c.type === "text").map((c: any) => c.text).join(" ")
+						: "";
+				currentTitle = text.slice(0, 100) || "New Session";
+			} else {
+				currentTitle = "New Session";
+			}
+		}
+		saveSession(true);
+	}
 	intentionalDisconnect = true;
 	if (ws) {
 		ws.removeEventListener("open", onWebSocketOpen);
@@ -790,13 +828,7 @@ async function fetchAgentProfiles(): Promise<void> {
 function selectAgentProfile(profileId: string | undefined): void {
 	profileMenuOpen = false;
 
-	// Save current session before switching (if there's anything to save)
-	clearTimeout(saveSessionTimer);
-	if (currentSessionId && remoteAgent) {
-		saveSession();
-	}
-
-	// Disconnect old WebSocket cleanly (listeners removed, no stale reconnects)
+	// Disconnect old WebSocket cleanly — this flushes any pending session save
 	disconnectWebSocket();
 
 	// Now clear state for the new profile session
@@ -1153,17 +1185,14 @@ const renderApp = () => {
 	const renderSessionRow = (session: SessionMetadata) => {
 		const status = sessionStatusMap.get(session.id);
 		const isGenerating = status === "generating";
-		const isIdle = status === "idle";
 		const isMoveOpen = moveMenuSessionId === session.id;
 		return html`
 		<div
 			class="group flex items-center gap-1 px-2 py-1.5 rounded-md text-sm cursor-pointer transition-colors relative ${session.id === currentSessionId ? "bg-muted font-medium" : "hover:bg-muted/60"}"
 			@click=${() => loadSession(session.id)}
 		>
-			<span class="relative shrink-0">
-				${icon(MessageSquare, "sm")}
-				${isGenerating ? html`<span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>` : nothing}
-				${isIdle ? html`<span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-orange-400"></span>` : nothing}
+			<span class="shrink-0">
+				${isGenerating ? html`<span class="animate-spin text-muted-foreground">${icon(LoaderCircle, "sm")}</span>` : icon(MessageSquare, "sm")}
 			</span>
 			<span class="flex-1 truncate">${session.title || "Untitled"}</span>
 			${isGenerating && session.id !== currentSessionId ? html`

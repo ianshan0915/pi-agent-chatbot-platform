@@ -295,8 +295,9 @@ async function main() {
 				[sessionId],
 			);
 			if (sessionResult.rows.length === 0) {
-				// Session doesn't exist — let it proceed as a new session
-				sessionId = undefined;
+				// Session not in DB yet (async client save may be in-flight).
+				// Keep sessionId so TenantBridge can check the process pool for
+				// reattachment. Pool-level userId check prevents cross-user access.
 			} else if (sessionResult.rows[0].user_id !== user.userId) {
 				console.warn(`[server] User ${user.userId} attempted to access session ${sessionId} owned by ${sessionResult.rows[0].user_id}`);
 				ws.close(4003, "Session not owned by authenticated user");

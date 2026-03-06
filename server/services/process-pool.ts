@@ -20,6 +20,8 @@ export interface ProcessInfo {
 	lastActivity: number;
 	state: "starting" | "running" | "stopping" | "crashed";
 	generating: boolean;
+	/** Cleanup callback set by a detaching bridge so a reattaching bridge can close the old readline. */
+	detachCleanup?: () => void;
 }
 
 export type StopReason = "idle" | "crash" | "manual" | "shutdown";
