@@ -311,8 +311,17 @@ export class TenantBridge extends WsBridge {
 	private createProcess(): ChildProcess {
 		const { command, commandArgs } = resolvePiCommand();
 		const args = [...commandArgs, "--mode", "rpc"];
-		if (this.options.provider) args.push("--provider", this.options.provider);
-		if (this.options.model) args.push("--model", this.options.model);
+
+		// Validate provider/model values to prevent argument injection
+		const SAFE_ARG = /^[a-zA-Z0-9._-]+$/;
+		if (this.options.provider) {
+			if (!SAFE_ARG.test(this.options.provider)) throw new Error("Invalid provider value");
+			args.push("--provider", this.options.provider);
+		}
+		if (this.options.model) {
+			if (!SAFE_ARG.test(this.options.model)) throw new Error("Invalid model value");
+			args.push("--model", this.options.model);
+		}
 		if (this.options.args) args.push(...this.options.args);
 
 		// Inject system prompt from agent profile

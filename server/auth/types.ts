@@ -38,6 +38,8 @@ export interface RegisterRequest {
 	password: string;
 	displayName?: string;
 	teamName?: string;
+	inviteToken?: string;
+	turnstileToken?: string;
 }
 
 /** Auth response (login + register) */
@@ -51,4 +53,10 @@ export interface AuthResponse {
 		teamId: string;
 		teamName: string;
 	};
+}
+
+/** Register response (no JWT until verified) */
+export interface RegisterResponse {
+	message: string;
+	requiresVerification: boolean;
 }

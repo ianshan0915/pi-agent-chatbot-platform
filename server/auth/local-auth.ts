@@ -1,7 +1,9 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import crypto from "node:crypto";
 import type { Database } from "../db/types.js";
-import type { AuthResponse, JwtPayload } from "./types.js";
+import type { AuthResponse, JwtPayload, RegisterResponse } from "./types.js";
+import { sendVerificationEmail } from "../services/email.js";
 
 const SALT_ROUNDS = 12;
 const TOKEN_EXPIRY = "7d";
@@ -86,7 +88,7 @@ export function signJwt(payload: Omit<JwtPayload, "iat" | "exp">): string {
 /** Verify and decode a JWT token. Returns null if invalid/expired. */
 export function verifyJwt(token: string): JwtPayload | null {
 	try {
-		return jwt.verify(token, getJwtSecret()) as JwtPayload;
+		return jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] }) as JwtPayload;
 	} catch {
 		return null;
 	}
@@ -94,9 +96,11 @@ export function verifyJwt(token: string): JwtPayload | null {
 
 /**
  * Register a new user.
- * - If teamName is provided, creates a new team and the user becomes admin.
- * - If no teamName, creates a "Personal" team and the user becomes admin.
- * - First user in a team is always admin.
+ *
+ * When REGISTRATION_MODE=invite, an invite token is required and the user
+ * joins the invite's team. Otherwise a new team is created.
+ *
+ * No JWT is issued — the user must verify their email first.
  */
 export async function registerUser(
 	db: Database,
@@ -104,11 +108,12 @@ export async function registerUser(
 	password: string,
 	displayName?: string,
 	teamName?: string,
-): Promise<AuthResponse> {
+	inviteToken?: string,
+): Promise<RegisterResponse> {
 	// Validate password complexity
 	validatePassword(password);
 
-	// Check for existing user
+	// Check for existing user — return same response to prevent enumeration
 	const { rows: existing } = await db.query(
 		"SELECT id FROM users WHERE email = $1",
 		[email],
@@ -117,61 +122,110 @@ export async function registerUser(
 		throw new ConflictError("A user with this email already exists");
 	}
 
+	// Validate invite token if provided (route handler enforces invite-only mode)
+	let inviteTeamId: string | null = null;
+	let inviteTokenId: string | null = null;
+	if (inviteToken) {
+		const invite = await validateInviteToken(db, inviteToken, email);
+		inviteTeamId = invite.teamId;
+		inviteTokenId = invite.id;
+	}
+
 	const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 	const client = await db.getClient();
+	let verificationToken: string;
 
 	try {
 		await client.query("BEGIN");
 
-		// Create team
-		const { rows: teamRows } = await client.query(
-			"INSERT INTO teams (name) VALUES ($1) RETURNING id, name",
-			[teamName || "Personal"],
-		);
-		const team = teamRows[0];
+		let teamId: string;
+		if (inviteTeamId) {
+			teamId = inviteTeamId;
+		} else {
+			const { rows: teamRows } = await client.query(
+				"INSERT INTO teams (name) VALUES ($1) RETURNING id",
+				[teamName || "Personal"],
+			);
+			teamId = teamRows[0].id;
+		}
 
-		// First user in team is admin
-		const role = "admin";
+		const role = inviteTeamId ? "member" : "admin";
 
 		const { rows: userRows } = await client.query(
-			`INSERT INTO users (team_id, email, password_hash, display_name, role)
-			 VALUES ($1, $2, $3, $4, $5)
-			 RETURNING id, email, display_name, role, team_id`,
-			[team.id, email, passwordHash, displayName || null, role],
+			`INSERT INTO users (team_id, email, password_hash, display_name, role, email_verified)
+			 VALUES ($1, $2, $3, $4, $5, FALSE)
+			 RETURNING id, email`,
+			[teamId, email, passwordHash, displayName || null, role],
 		);
 		const user = userRows[0];
 
+		if (inviteTokenId) {
+			await client.query(
+				"UPDATE invite_tokens SET use_count = use_count + 1 WHERE id = $1",
+				[inviteTokenId],
+			);
+		}
+
+		verificationToken = crypto.randomBytes(32).toString("hex");
+		await client.query(
+			`INSERT INTO email_verification_tokens (user_id, token, expires_at)
+			 VALUES ($1, $2, NOW() + INTERVAL '24 hours')`,
+			[user.id, verificationToken],
+		);
+
 		await client.query("COMMIT");
-
-		const token = signJwt({
-			sub: user.id,
-			teamId: user.team_id,
-			email: user.email,
-			role: user.role,
-		});
-
-		return {
-			token,
-			user: {
-				id: user.id,
-				email: user.email,
-				displayName: user.display_name,
-				role: user.role,
-				teamId: user.team_id,
-				teamName: team.name,
-			},
-		};
 	} catch (err) {
 		await client.query("ROLLBACK");
 		throw err;
 	} finally {
 		client.release();
 	}
+
+	// Send verification email after transaction — failure here is non-fatal
+	// (user can use "resend verification" to retry)
+	const appUrl = process.env.APP_URL || "http://localhost:3001";
+	const verificationUrl = `${appUrl}/api/auth/verify?token=${verificationToken}`;
+	try {
+		await sendVerificationEmail(email, verificationUrl);
+	} catch (err) {
+		console.error("[auth] Failed to send verification email:", err);
+	}
+
+	return {
+		message: "Account created. Please check your email to verify your address.",
+		requiresVerification: true,
+	};
+}
+
+/**
+ * Validate an invite token. Returns the invite's team_id and id.
+ */
+async function validateInviteToken(
+	db: Database,
+	token: string,
+	email: string,
+): Promise<{ id: string; teamId: string }> {
+	const { rows } = await db.query<{ id: string; team_id: string; email: string | null; max_uses: number; use_count: number }>(
+		`SELECT id, team_id, email, max_uses, use_count FROM invite_tokens
+		 WHERE token = $1 AND revoked_at IS NULL AND expires_at > NOW()`,
+		[token],
+	);
+	if (rows.length === 0) {
+		throw new ValidationError("Invalid or expired invite token");
+	}
+	const invite = rows[0];
+	if (invite.email && invite.email.toLowerCase() !== email.toLowerCase()) {
+		throw new ValidationError("This invite is for a different email address");
+	}
+	if (invite.use_count >= invite.max_uses) {
+		throw new ValidationError("This invite has been fully used");
+	}
+	return { id: invite.id, teamId: invite.team_id };
 }
 
 /**
  * Login an existing user with email/password.
- * Updates last_login timestamp.
+ * Updates last_login timestamp. Requires email to be verified.
  */
 export async function loginUser(
 	db: Database,
@@ -182,7 +236,7 @@ export async function loginUser(
 	checkLockout(email);
 
 	const { rows } = await db.query(
-		`SELECT u.id, u.email, u.password_hash, u.display_name, u.role, u.team_id, t.name as team_name
+		`SELECT u.id, u.email, u.password_hash, u.display_name, u.role, u.team_id, u.email_verified, t.name as team_name
 		 FROM users u
 		 JOIN teams t ON t.id = u.team_id
 		 WHERE u.email = $1`,
@@ -204,6 +258,11 @@ export async function loginUser(
 	if (!valid) {
 		checkAndRecordFailure(email);
 		throw new AuthError("Invalid email or password");
+	}
+
+	// Check email verification
+	if (!user.email_verified) {
+		throw new UnverifiedError("Please verify your email address before signing in.");
 	}
 
 	// Successful login — clear any failed attempts
@@ -234,6 +293,64 @@ export async function loginUser(
 	};
 }
 
+/**
+ * Verify an email address using a verification token.
+ */
+export async function verifyEmail(db: Database, token: string): Promise<void> {
+	const { rows } = await db.query<{ id: string; user_id: string }>(
+		`SELECT id, user_id FROM email_verification_tokens
+		 WHERE token = $1 AND consumed_at IS NULL AND expires_at > NOW()`,
+		[token],
+	);
+
+	if (rows.length === 0) {
+		throw new ValidationError("Invalid or expired verification link");
+	}
+
+	const { id, user_id } = rows[0];
+
+	await db.query(
+		"UPDATE email_verification_tokens SET consumed_at = NOW() WHERE id = $1",
+		[id],
+	);
+	await db.query(
+		"UPDATE users SET email_verified = TRUE WHERE id = $1",
+		[user_id],
+	);
+}
+
+/**
+ * Resend verification email. Always returns success to prevent enumeration.
+ */
+export async function resendVerification(db: Database, email: string): Promise<void> {
+	const { rows } = await db.query<{ id: string }>(
+		"SELECT id FROM users WHERE email = $1 AND email_verified = FALSE",
+		[email],
+	);
+
+	if (rows.length === 0) return; // User not found or already verified — silent success
+
+	const userId = rows[0].id;
+
+	// Delete old pending tokens
+	await db.query(
+		"DELETE FROM email_verification_tokens WHERE user_id = $1 AND consumed_at IS NULL",
+		[userId],
+	);
+
+	// Create new token
+	const verificationToken = crypto.randomBytes(32).toString("hex");
+	await db.query(
+		`INSERT INTO email_verification_tokens (user_id, token, expires_at)
+		 VALUES ($1, $2, NOW() + INTERVAL '24 hours')`,
+		[userId, verificationToken],
+	);
+
+	const appUrl = process.env.APP_URL || "http://localhost:3001";
+	const verificationUrl = `${appUrl}/api/auth/verify?token=${verificationToken}`;
+	await sendVerificationEmail(email, verificationUrl);
+}
+
 /** Custom error for 409 Conflict (duplicate registration). */
 export class ConflictError extends Error {
 	constructor(message: string) {
@@ -247,5 +364,13 @@ export class AuthError extends Error {
 	constructor(message: string) {
 		super(message);
 		this.name = "AuthError";
+	}
+}
+
+/** Custom error for 403 Forbidden (email not verified). */
+export class UnverifiedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "UnverifiedError";
 	}
 }

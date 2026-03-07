@@ -34,6 +34,7 @@ import { createAgentProfilesRouter } from "./routes/agent-profiles.js";
 import { createMemoryRouter } from "./routes/memory.js";
 import { createTeamMembersRouter } from "./routes/team-members.js";
 import { createProjectsRouter } from "./routes/projects.js";
+import { createInvitesRouter } from "./routes/invites.js";
 import { requireAuth } from "./auth/middleware.js";
 import { createCryptoService } from "./services/crypto.js";
 import { ProcessPool } from "./services/process-pool.js";
@@ -109,10 +110,11 @@ async function main() {
 			contentSecurityPolicy: {
 				directives: {
 					defaultSrc: ["'self'"],
-					scriptSrc: ["'self'", "'unsafe-inline'", ...trustedCDNs, ...(isDev ? ["'unsafe-eval'"] : [])],
+					scriptSrc: ["'self'", "'unsafe-inline'", ...trustedCDNs, "https://challenges.cloudflare.com", ...(isDev ? ["'unsafe-eval'"] : [])],
 					styleSrc: ["'self'", "'unsafe-inline'", ...trustedCDNs],
 					imgSrc: ["'self'", "data:", "blob:", "https:"],
-					connectSrc: ["'self'", "ws:", "wss:", ...trustedCDNs],
+					frameSrc: ["'self'", "https://challenges.cloudflare.com"],
+					connectSrc: ["'self'", "ws:", "wss:", ...trustedCDNs, "https://challenges.cloudflare.com"],
 					workerSrc: ["'self'", "blob:"],
 					fontSrc: ["'self'", ...trustedCDNs],
 					objectSrc: ["'none'"],
@@ -129,6 +131,10 @@ async function main() {
 	const allowedOrigins = process.env.ALLOWED_ORIGINS
 		? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
 		: [];
+	if (!isDev && allowedOrigins.length === 0) {
+		console.error("[server] ALLOWED_ORIGINS must be set in production");
+		process.exit(1);
+	}
 	if (isDev) {
 		allowedOrigins.push("http://localhost:3001", "http://localhost:5173");
 	}
@@ -182,6 +188,7 @@ async function main() {
 	app.use("/api/memory", apiRateLimit, createMemoryRouter());
 	app.use("/api/team-members", apiRateLimit, createTeamMembersRouter());
 	app.use("/api/projects", apiRateLimit, createProjectsRouter(agentExecutor));
+	app.use("/api/invites", apiRateLimit, createInvitesRouter());
 
 	// Read files from the agent's working directory (for rendering artifacts)
 	app.get("/api/agent-files", requireAuth, apiRateLimit, async (req, res) => {
@@ -255,7 +262,7 @@ async function main() {
 
 	// --- WebSocket ---
 	const server = createServer(app);
-	const wss = new WebSocketServer({ noServer: true });
+	const wss = new WebSocketServer({ noServer: true, maxPayload: 10 * 1024 * 1024 });
 
 	wss.on("connection", async (ws, req) => {
 		// Auth user is attached by the upgrade handler

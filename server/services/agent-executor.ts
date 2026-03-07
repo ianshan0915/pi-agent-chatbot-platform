@@ -125,6 +125,11 @@ export class AgentExecutor {
 		const paths = await Promise.all(
 			fileResult.rows.map(async (file) => {
 				const filePath = path.join(targetDir, file.filename);
+				// Path traversal protection: ensure resolved path stays within target directory
+				const resolved = path.resolve(filePath);
+				if (!resolved.startsWith(path.resolve(targetDir) + path.sep)) {
+					throw new Error(`Filename escapes target directory: ${file.filename}`);
+				}
 				const data = await this.storage.download(file.storage_key);
 				await fs.writeFile(filePath, data);
 				return filePath;

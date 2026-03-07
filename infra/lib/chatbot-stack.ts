@@ -10,6 +10,7 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as ses from "aws-cdk-lib/aws-ses";
 import type { Construct } from "constructs";
 
 export interface ChatbotPlatformStackProps extends cdk.StackProps {
@@ -19,6 +20,8 @@ export interface ChatbotPlatformStackProps extends cdk.StackProps {
 	hostedZoneName?: string;
 	/** Existing hosted zone ID (skip lookup if provided) */
 	hostedZoneId?: string;
+	/** Email "From" address for verification/invite emails, e.g. "noreply@example.com" */
+	emailFromAddress?: string;
 }
 
 export class ChatbotPlatformStack extends cdk.Stack {
@@ -150,6 +153,40 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		}
 
 		// ----------------------------------------------------------------
+		// SES — email delivery (verification emails, invites, job results)
+		// ----------------------------------------------------------------
+		// SES email identity for the domain (auto-adds DKIM DNS records if hostedZone exists)
+		if (props.hostedZoneName && hostedZone) {
+			new ses.EmailIdentity(this, "SesIdentity", {
+				identity: ses.Identity.publicHostedZone(hostedZone as route53.IPublicHostedZone),
+			});
+		}
+
+		// IAM user for SES SMTP credentials.
+		// After deploy: generate SMTP credentials in IAM console for this user,
+		// then store them in Secrets Manager under chatbot-platform/smtp-credentials.
+		const smtpUser = new iam.User(this, "SmtpUser", {
+			userName: "chatbot-platform-smtp",
+		});
+		smtpUser.addToPolicy(new iam.PolicyStatement({
+			effect: iam.Effect.ALLOW,
+			actions: ["ses:SendRawEmail"],
+			resources: ["*"],
+		}));
+
+		const smtpSecrets = new secretsmanager.Secret(this, "SmtpSecrets", {
+			secretName: "chatbot-platform/smtp-credentials",
+			description: "SES SMTP credentials — update after generating in IAM console",
+			generateSecretString: {
+				secretStringTemplate: JSON.stringify({
+					username: "REPLACE_WITH_SES_SMTP_USERNAME",
+					password: "REPLACE_WITH_SES_SMTP_PASSWORD",
+				}),
+				generateStringKey: "_placeholder",
+			},
+		});
+
+		// ----------------------------------------------------------------
 		// Fargate Task Definition
 		// ----------------------------------------------------------------
 		const taskDefinition = new ecs.FargateTaskDefinition(this, "TaskDef", {
@@ -189,6 +226,13 @@ export class ChatbotPlatformStack extends cdk.Stack {
 				PROCESS_POOL_MAX: "30",
 				PROCESS_IDLE_TIMEOUT_MS: "600000",
 				ALLOWED_ORIGINS: props.domainName ? `https://${props.domainName}` : "",
+				// SES SMTP (region-specific endpoint)
+				SMTP_HOST: `email-smtp.${this.region}.amazonaws.com`,
+				SMTP_PORT: "587",
+				SMTP_SECURE: "false",
+				EMAIL_FROM_ADDRESS: props.emailFromAddress || (props.domainName ? `noreply@${props.hostedZoneName || props.domainName}` : ""),
+				APP_URL: props.domainName ? `https://${props.domainName}` : "",
+				REGISTRATION_MODE: "open",
 			},
 			secrets: {
 				// Inject individual secret fields as env vars
@@ -200,6 +244,9 @@ export class ChatbotPlatformStack extends cdk.Stack {
 				DB_USERNAME: ecs.Secret.fromSecretsManager(dbSecret, "username"),
 				DB_PASSWORD: ecs.Secret.fromSecretsManager(dbSecret, "password"),
 				DB_NAME: ecs.Secret.fromSecretsManager(dbSecret, "dbname"),
+				// SES SMTP credentials
+				SMTP_USER: ecs.Secret.fromSecretsManager(smtpSecrets, "username"),
+				SMTP_PASSWORD: ecs.Secret.fromSecretsManager(smtpSecrets, "password"),
 			},
 			portMappings: [{ containerPort: 3001, protocol: ecs.Protocol.TCP }],
 			healthCheck: {
@@ -302,5 +349,20 @@ export class ChatbotPlatformStack extends cdk.Stack {
 				description: "Application URL",
 			});
 		}
+
+		new cdk.CfnOutput(this, "SmtpUserName", {
+			value: smtpUser.userName,
+			description: "IAM user for SES SMTP — generate SMTP credentials in IAM console",
+		});
+
+		new cdk.CfnOutput(this, "SmtpSecretsArn", {
+			value: smtpSecrets.secretArn,
+			description: "Secrets Manager ARN — store SES SMTP credentials here",
+		});
+
+		new cdk.CfnOutput(this, "SmtpEndpoint", {
+			value: `email-smtp.${this.region}.amazonaws.com:587`,
+			description: "SES SMTP endpoint",
+		});
 	}
 }

@@ -23,3 +23,13 @@ export const authRateLimit = rateLimit({
 	legacyHeaders: false,
 	message: { success: false, error: "Too many auth attempts, please try again later" },
 });
+
+/** 3 req/min per IP for signup (bots use different emails, so key by IP only) */
+export const signupRateLimit = rateLimit({
+	windowMs: 60 * 1000,
+	max: 3,
+	keyGenerator: (req) => ipKeyGenerator(req),
+	standardHeaders: true,
+	legacyHeaders: false,
+	message: { success: false, error: "Too many signup attempts, please try again later" },
+});

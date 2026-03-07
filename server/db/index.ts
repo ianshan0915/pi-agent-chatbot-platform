@@ -14,7 +14,7 @@ export function createDatabase(connectionString?: string): Database {
 		idleTimeoutMillis: 30_000,
 		connectionTimeoutMillis: 5_000,
 		// Enable SSL for RDS (production). The pg library ignores sslmode in the URL.
-		...(process.env.NODE_ENV === "production" ? { ssl: { rejectUnauthorized: false } } : {}),
+		...(process.env.NODE_ENV === "production" ? { ssl: { rejectUnauthorized: true } } : {}),
 	});
 
 	pool.on("error", (err) => {

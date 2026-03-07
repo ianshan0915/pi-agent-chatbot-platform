@@ -40,6 +40,7 @@ export async function resolveFilesForUser(
 	}
 
 	const tmpBase = await fs.mkdtemp(path.join(os.tmpdir(), "pi-files-"));
+	await fs.chmod(tmpBase, 0o700);
 	const filePaths: string[] = [];
 
 	for (const file of result.rows) {
@@ -48,7 +49,7 @@ export async function resolveFilesForUser(
 			// Ensure subdirectory exists (in case filename has no subdirs, this is a no-op on tmpBase)
 			await fs.mkdir(path.dirname(destPath), { recursive: true });
 			const data = await storage.download(file.storage_key);
-			await fs.writeFile(destPath, data);
+			await fs.writeFile(destPath, data, { mode: 0o600 });
 			filePaths.push(destPath);
 		} catch (err) {
 			console.error(`[file-resolver] Failed to resolve file "${file.filename}":`, err);

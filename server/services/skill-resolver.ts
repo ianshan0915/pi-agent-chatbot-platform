@@ -61,6 +61,7 @@ export async function resolveSkillsForUser(
 	}
 
 	const tmpBase = await fs.mkdtemp(path.join(os.tmpdir(), "pi-skills-"));
+	await fs.chmod(tmpBase, 0o700);
 	const skillPaths: string[] = [];
 
 	await Promise.all(
@@ -82,13 +83,13 @@ export async function resolveSkillsForUser(
 							const filePath = path.join(skillDir, relativePath);
 							await fs.mkdir(path.dirname(filePath), { recursive: true });
 							const data = await storage.download(key);
-							await fs.writeFile(filePath, data);
+							await fs.writeFile(filePath, data, { mode: 0o600 });
 						}),
 					);
 				} else {
 					// Single SKILL.md file
 					const data = await storage.download(skill.storage_key);
-					await fs.writeFile(path.join(skillDir, "SKILL.md"), data);
+					await fs.writeFile(path.join(skillDir, "SKILL.md"), data, { mode: 0o600 });
 				}
 
 				skillPaths.push(skillDir);

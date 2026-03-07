@@ -56,9 +56,14 @@ COPY vite.config.ts ./
 
 COPY scripts/entrypoint.sh ./scripts/
 
+RUN groupadd --system app && useradd --system --gid app app
+RUN chown -R app:app /app
+
 ENV NODE_ENV=production
 ENV PORT=3001
 
 EXPOSE 3001
+
+USER app
 
 CMD ["sh", "scripts/entrypoint.sh"]

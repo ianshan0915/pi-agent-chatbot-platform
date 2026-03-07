@@ -19,10 +19,21 @@ export interface AuthResponse {
   };
 }
 
+export interface RegisterResponse {
+  message: string;
+  requiresVerification: boolean;
+}
+
+export interface RegistrationConfig {
+  mode: string;
+  turnstileSiteKey: string | null;
+}
+
 export class AuthClient {
   private _token: string | null = null;
   private _user: AuthUser | null = null;
   private listeners = new Set<(user: AuthUser | null) => void>();
+  private _registrationConfig: RegistrationConfig | null = null;
 
   constructor() {
     // Restore from localStorage
@@ -53,8 +64,37 @@ export class AuthClient {
     return this.postAuth("/api/auth/login", { email, password }, "Login failed");
   }
 
-  async register(email: string, password: string, displayName?: string, teamName?: string): Promise<AuthResponse> {
-    return this.postAuth("/api/auth/register", { email, password, displayName, teamName }, "Registration failed");
+  async register(
+    email: string,
+    password: string,
+    displayName?: string,
+    teamName?: string,
+    inviteToken?: string,
+    turnstileToken?: string,
+  ): Promise<RegisterResponse> {
+    const res = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, displayName, teamName, inviteToken, turnstileToken }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || "Registration failed");
+    return body.data as RegisterResponse;
+  }
+
+  async resendVerification(email: string): Promise<void> {
+    await fetch("/api/auth/resend-verification", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  async getRegistrationConfig(): Promise<RegistrationConfig> {
+    if (this._registrationConfig) return this._registrationConfig;
+    const res = await fetch("/api/auth/registration-config");
+    this._registrationConfig = await res.json() as RegistrationConfig;
+    return this._registrationConfig;
   }
 
   logout(): void {

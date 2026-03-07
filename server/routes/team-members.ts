@@ -136,8 +136,8 @@ export function createTeamMembersRouter(): Router {
 		const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
 		const { rows } = await db.query(
-			`INSERT INTO users (team_id, email, password_hash, display_name, role)
-			 VALUES ($1, $2, $3, $4, $5)
+			`INSERT INTO users (team_id, email, password_hash, display_name, role, email_verified)
+			 VALUES ($1, $2, $3, $4, $5, TRUE)
 			 RETURNING id, email, display_name, role, created_at`,
 			[req.user!.teamId, email, passwordHash, displayName || null, memberRole],
 		);
@@ -181,10 +181,15 @@ export function createTeamMembersRouter(): Router {
 			}
 		}
 
-		await db.query(
-			"UPDATE users SET role = $1 WHERE id = $2",
-			[role, userId],
+		const updateResult = await db.query(
+			"UPDATE users SET role = $1 WHERE id = $2 AND team_id = $3",
+			[role, userId, req.user!.teamId],
 		);
+
+		if (updateResult.rowCount === 0) {
+			res.status(404).json({ success: false, error: "User not found in your team" });
+			return;
+		}
 
 		res.json({ success: true });
 	}));

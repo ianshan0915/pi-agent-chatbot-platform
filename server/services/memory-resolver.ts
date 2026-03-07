@@ -87,7 +87,7 @@ export async function resolveMemoryForUser(
 
 	const content = lines.join("\n");
 	const filePath = path.join(os.tmpdir(), `pi-memory-${randomUUID()}.md`);
-	await fs.writeFile(filePath, content);
+	await fs.writeFile(filePath, content, { mode: 0o600 });
 
 	const cleanup = () => {
 		fs.unlink(filePath).catch(() => {});
