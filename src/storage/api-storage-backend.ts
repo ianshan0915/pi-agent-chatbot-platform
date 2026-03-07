@@ -426,12 +426,23 @@ export class ApiStorageBackend implements StorageBackend {
 			const metadata = value as any;
 			store.set(key, metadata);
 
-			// Sync title change to server
+			// Sync title change to server (wait for any pending session creation first)
 			if (metadata.title !== undefined) {
-				this.syncToServer(`/api/sessions/${key}`, {
-					method: "PATCH",
-					body: JSON.stringify({ title: metadata.title }),
-				});
+				const pending = this.pendingCreations.get(key);
+				if (pending) {
+					pending.then(() => {
+						this.syncToServer(`/api/sessions/${key}`, {
+							method: "PATCH",
+							body: JSON.stringify({ title: metadata.title }),
+						});
+					}).catch(() => {});
+				} else if (this.knownServerSessions.has(key)) {
+					this.syncToServer(`/api/sessions/${key}`, {
+						method: "PATCH",
+						body: JSON.stringify({ title: metadata.title }),
+					});
+				}
+				// If session is neither pending nor known, skip — it will be created soon
 			}
 			return;
 		}
