@@ -1115,7 +1115,11 @@ function buildWelcomeContent() {
 function updateWelcomeContent() {
 	if (!chatPanel) return;
 	const messages = remoteAgent?.state?.messages || [];
-	if (messages.length > 0 || currentSessionId) {
+	// Show welcome screen when there are no messages and we're not about to
+	// restore a previous session (pendingSessionMessages is set during loadSession).
+	// Note: currentSessionId is always pre-generated in connectWebSocket(), so
+	// it can't be used as a signal for "active conversation".
+	if (messages.length > 0 || pendingSessionMessages) {
 		chatPanel.welcomeContent = undefined;
 	} else {
 		chatPanel.welcomeContent = buildWelcomeContent();

@@ -172,6 +172,61 @@ async function processZipBundle(
 	return { name: parsed.name, description: parsed.description, files };
 }
 
+/** Parse a GitHub directory/file URL into components */
+function parseGitHubUrl(url: string): { owner: string; repo: string; branch: string; path: string; isFile: boolean } | null {
+	// Directory: https://github.com/{owner}/{repo}/tree/{branch}/{path}
+	const treeMatch = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+?)(?:\/?$)/);
+	if (treeMatch) {
+		return { owner: treeMatch[1], repo: treeMatch[2], branch: treeMatch[3], path: treeMatch[4], isFile: false };
+	}
+	// File: https://github.com/{owner}/{repo}/blob/{branch}/{path}
+	const blobMatch = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+?)(?:\/?$)/);
+	if (blobMatch) {
+		return { owner: blobMatch[1], repo: blobMatch[2], branch: blobMatch[3], path: blobMatch[4], isFile: true };
+	}
+	return null;
+}
+
+const GITHUB_MAX_FILES = 100;
+const GITHUB_MAX_TOTAL_BYTES = 25 * 1024 * 1024; // 25MB
+
+/** Fetch all files in a GitHub directory using the Git Trees API */
+async function fetchGitHubDirectory(
+	owner: string, repo: string, branch: string, dirPath: string,
+): Promise<Array<{ path: string; data: Buffer }> | { error: string }> {
+	const treeRes = await fetch(
+		`https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
+		{ headers: { "User-Agent": "chatbot-platform", Accept: "application/vnd.github.v3+json" } },
+	);
+
+	if (treeRes.status === 404) return { error: "Repository or branch not found" };
+	if (treeRes.status === 403) return { error: "GitHub API rate limit exceeded. Try again later." };
+	if (!treeRes.ok) return { error: `GitHub API error: ${treeRes.status}` };
+
+	const tree = (await treeRes.json()) as { tree: Array<{ path: string; type: string; size?: number }> };
+	const prefix = dirPath + "/";
+	const entries = tree.tree.filter((e) => e.type === "blob" && e.path.startsWith(prefix));
+
+	if (entries.length === 0) return { error: `No files found at path "${dirPath}"` };
+	if (entries.length > GITHUB_MAX_FILES) return { error: `Too many files (${entries.length}). Max is ${GITHUB_MAX_FILES}.` };
+
+	const totalSize = entries.reduce((sum, e) => sum + (e.size || 0), 0);
+	if (totalSize > GITHUB_MAX_TOTAL_BYTES) return { error: `Total size too large (${(totalSize / 1024 / 1024).toFixed(1)}MB). Max is 25MB.` };
+
+	const files: Array<{ path: string; data: Buffer }> = [];
+	await Promise.all(
+		entries.map(async (entry) => {
+			const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${entry.path}`;
+			const res = await fetch(rawUrl);
+			if (!res.ok) throw new Error(`Failed to download ${entry.path}: ${res.status}`);
+			const data = Buffer.from(await res.arrayBuffer());
+			files.push({ path: entry.path.slice(prefix.length), data });
+		}),
+	);
+
+	return files;
+}
+
 export function createSkillsRouter(storage: StorageService): Router {
 	const router = Router();
 	router.use(requireAuth);
@@ -281,6 +336,120 @@ export function createSkillsRouter(storage: StorageService): Router {
 			);
 
 			res.status(201).json({ success: true, data: { name: parsed.name, scope, format: "md" } });
+		}
+	}));
+
+	// -----------------------------------------------------------------------
+	// POST /import-github — Import a skill from a GitHub URL
+	// -----------------------------------------------------------------------
+	router.post("/import-github", asyncRoute(async (req, res) => {
+		const { url, scope } = req.body as { url?: string; scope?: string };
+
+		if (!url || typeof url !== "string") {
+			res.status(400).json({ success: false, error: "url is required" });
+			return;
+		}
+		if (!scope || !["platform", "team", "user"].includes(scope)) {
+			res.status(400).json({ success: false, error: "scope must be 'platform', 'team', or 'user'" });
+			return;
+		}
+		if ((scope === "platform" || scope === "team") && req.user!.role !== "admin") {
+			res.status(403).json({ success: false, error: "Only admins can create platform/team skills" });
+			return;
+		}
+
+		const parsed = parseGitHubUrl(url);
+		if (!parsed) {
+			res.status(400).json({ success: false, error: "Invalid GitHub URL. Expected: https://github.com/{owner}/{repo}/tree/{branch}/{path}" });
+			return;
+		}
+
+		const ownerId = scope === "team" ? req.user!.teamId : scope === "platform" ? req.user!.teamId : req.user!.userId;
+		const db = getDatabase();
+
+		try {
+			if (parsed.isFile) {
+				// Single file — must be SKILL.md
+				if (!parsed.path.endsWith("SKILL.md")) {
+					res.status(400).json({ success: false, error: "File URL must point to a SKILL.md file" });
+					return;
+				}
+
+				const rawUrl = `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/${parsed.branch}/${parsed.path}`;
+				const fileRes = await fetch(rawUrl);
+				if (!fileRes.ok) {
+					res.status(400).json({ success: false, error: `Failed to fetch file: ${fileRes.status}` });
+					return;
+				}
+				const content = await fileRes.text();
+				const meta = parseSkillMd(content);
+				if ("error" in meta) {
+					res.status(400).json({ success: false, error: meta.error });
+					return;
+				}
+
+				const storageKey = `skills/${ownerId}/${meta.name}/SKILL.md`;
+				const existing = await db.query<SkillRow>(
+					`SELECT format, storage_key FROM skills WHERE scope = $1 AND owner_id = $2 AND name = $3`,
+					[scope, ownerId, meta.name],
+				);
+				if (existing.rows.length > 0 && existing.rows[0].format === "zip") {
+					await storage.deleteByPrefix(existing.rows[0].storage_key);
+				}
+
+				await storage.upload(storageKey, Buffer.from(content, "utf-8"), "text/markdown");
+				await db.query(
+					`INSERT INTO skills (scope, owner_id, name, description, format, storage_key)
+					 VALUES ($1, $2, $3, $4, 'md', $5)
+					 ON CONFLICT (scope, owner_id, name)
+					 DO UPDATE SET description = $4, format = 'md', storage_key = $5, updated_at = now()`,
+					[scope, ownerId, meta.name, meta.description, storageKey],
+				);
+
+				res.status(201).json({ success: true, data: { name: meta.name, scope, format: "md" } });
+			} else {
+				// Directory — fetch all files as a bundle
+				const files = await fetchGitHubDirectory(parsed.owner, parsed.repo, parsed.branch, parsed.path);
+				if ("error" in files) {
+					res.status(400).json({ success: false, error: files.error });
+					return;
+				}
+
+				// Find and validate SKILL.md
+				const skillMdFile = files.find((f) => f.path === "SKILL.md");
+				if (!skillMdFile) {
+					res.status(400).json({ success: false, error: "No SKILL.md found in the GitHub directory" });
+					return;
+				}
+				const meta = parseSkillMd(skillMdFile.data.toString("utf-8"));
+				if ("error" in meta) {
+					res.status(400).json({ success: false, error: meta.error });
+					return;
+				}
+
+				const storagePrefix = `skills/${ownerId}/${meta.name}/`;
+				await storage.deleteByPrefix(storagePrefix);
+
+				for (const file of files) {
+					await storage.upload(storagePrefix + file.path, file.data);
+				}
+
+				const format = files.length === 1 ? "md" : "zip";
+				const storageKey = format === "md" ? storagePrefix + "SKILL.md" : storagePrefix;
+
+				await db.query(
+					`INSERT INTO skills (scope, owner_id, name, description, format, storage_key)
+					 VALUES ($1, $2, $3, $4, $5, $6)
+					 ON CONFLICT (scope, owner_id, name)
+					 DO UPDATE SET description = $4, format = $5, storage_key = $6, updated_at = now()`,
+					[scope, ownerId, meta.name, meta.description, format, storageKey],
+				);
+
+				res.status(201).json({ success: true, data: { name: meta.name, scope, format, fileCount: files.length } });
+			}
+		} catch (err: any) {
+			console.error("[skills] GitHub import error:", err);
+			res.status(500).json({ success: false, error: err.message || "Failed to import from GitHub" });
 		}
 	}));
 

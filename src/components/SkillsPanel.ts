@@ -152,6 +152,29 @@ export class SkillsPanel extends LitElement {
 			font-size: 0.875rem;
 		}
 		h3 { margin: 0 0 1rem 0; font-size: 1rem; font-weight: 600; }
+		input[type="text"] {
+			padding: 0.5rem;
+			border: 1px solid var(--border, #e5e7eb);
+			border-radius: 0.375rem;
+			font-size: 0.875rem;
+			background: var(--background, #fff);
+			color: var(--foreground, #111);
+			width: 100%;
+			box-sizing: border-box;
+		}
+		.divider {
+			display: flex;
+			align-items: center;
+			gap: 0.75rem;
+			margin: 0.75rem 0;
+			color: var(--muted-foreground, #6b7280);
+			font-size: 0.75rem;
+		}
+		.divider::before, .divider::after {
+			content: "";
+			flex: 1;
+			border-top: 1px solid var(--border, #e5e7eb);
+		}
 	`;
 
 	@property({ type: Function })
@@ -168,6 +191,8 @@ export class SkillsPanel extends LitElement {
 	@state() private selectedScope = "user";
 	@state() private selectedFile: File | null = null;
 	@state() private dragOver = false;
+	@state() private githubUrl = "";
+	@state() private importing = false;
 
 	override connectedCallback() {
 		super.connectedCallback();
@@ -244,6 +269,35 @@ export class SkillsPanel extends LitElement {
 		} catch {
 			this.statusMessage = "Network error";
 			this.statusType = "error";
+		}
+	}
+
+	private async handleGitHubImport() {
+		if (!this.githubUrl.trim()) return;
+
+		this.importing = true;
+		this.statusMessage = "";
+		try {
+			const result = await this.fetchApi("/api/skills/import-github", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ url: this.githubUrl.trim(), scope: this.selectedScope }),
+			});
+			if (result.success) {
+				const info = result.data;
+				this.statusMessage = `Imported "${info.name}" from GitHub${info.fileCount ? ` (${info.fileCount} files)` : ""}.`;
+				this.statusType = "success";
+				this.githubUrl = "";
+				await this.loadSkills();
+			} else {
+				this.statusMessage = result.error || "Import failed";
+				this.statusType = "error";
+			}
+		} catch (err) {
+			this.statusMessage = "Network error";
+			this.statusType = "error";
+		} finally {
+			this.importing = false;
 		}
 	}
 
@@ -336,6 +390,27 @@ export class SkillsPanel extends LitElement {
 						@click=${this.handleUpload}
 					>
 						${this.uploading ? "Uploading..." : "Upload"}
+					</button>
+				</div>
+
+				<div class="divider">or import from GitHub</div>
+
+				<div class="form-row">
+					<div class="form-field">
+						<input
+							type="text"
+							placeholder="https://github.com/owner/repo/tree/main/skills/my-skill"
+							.value=${this.githubUrl}
+							@input=${(e: Event) => (this.githubUrl = (e.target as HTMLInputElement).value)}
+							@keydown=${(e: KeyboardEvent) => { if (e.key === "Enter" && this.githubUrl.trim()) this.handleGitHubImport(); }}
+						/>
+					</div>
+					<button
+						class="btn-primary"
+						?disabled=${!this.githubUrl.trim() || this.importing}
+						@click=${this.handleGitHubImport}
+					>
+						${this.importing ? "Importing..." : "Import"}
 					</button>
 				</div>
 			</div>
