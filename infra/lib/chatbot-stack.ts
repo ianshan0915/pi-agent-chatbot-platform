@@ -88,6 +88,11 @@ export class ChatbotPlatformStack extends cdk.Stack {
 			},
 		});
 
+		// Brave Search API key — imported from pre-created secret
+		const braveSearchKey = secretsmanager.Secret.fromSecretNameV2(
+			this, "BraveSearchKey", "chatbot-platform/brave-search-key",
+		);
+
 		// ----------------------------------------------------------------
 		// RDS PostgreSQL — free tier eligible
 		// ----------------------------------------------------------------
@@ -215,6 +220,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		// Grant Secrets Manager read access
 		appSecrets.grantRead(taskDefinition.taskRole);
 		encryptionKeySecret.grantRead(taskDefinition.taskRole);
+		braveSearchKey.grantRead(taskDefinition.taskRole);
 
 		// Build DATABASE_URL from RDS secret
 		const dbSecret = database.secret!;
@@ -263,6 +269,8 @@ export class ChatbotPlatformStack extends cdk.Stack {
 				// SES SMTP credentials
 				SMTP_USER: ecs.Secret.fromSecretsManager(smtpSecrets, "username"),
 				SMTP_PASSWORD: ecs.Secret.fromSecretsManager(smtpSecrets, "password"),
+				// Brave Search
+				BRAVE_SEARCH_API_KEY: ecs.Secret.fromSecretsManager(braveSearchKey),
 			},
 			portMappings: [{ containerPort: 3001, protocol: ecs.Protocol.TCP }],
 			healthCheck: {
