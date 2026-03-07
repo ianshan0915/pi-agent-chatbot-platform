@@ -48,6 +48,7 @@ import { TenantBridge, type TenantBridgeOptions } from "./agent-service.js";
 import type { BridgeOptions } from "./ws-bridge.js";
 import type { AgentProfileRow } from "./db/types.js";
 import { RENDERABLE_EXTENSIONS, BINARY_EXTENSIONS } from "../src/shared/file-extensions.js";
+import { seedSkills } from "./db/seed-skills.js";
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const isDev = process.env.NODE_ENV !== "production";
@@ -61,6 +62,7 @@ async function main() {
 	const crypto = createCryptoService();
 	const processPool = new ProcessPool();
 	const storageService = await createStorageService();
+	await seedSkills(db, storageService);
 	const agentExecutor = new AgentExecutor({ db, crypto, storage: storageService });
 	const artifactCollector = new ArtifactCollector(db, storageService);
 	const taskQueueService = new TaskQueueService(db, storageService, agentExecutor, artifactCollector);
