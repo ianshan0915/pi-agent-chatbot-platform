@@ -20,6 +20,8 @@ export interface ChatbotPlatformStackProps extends cdk.StackProps {
 	hostedZoneName?: string;
 	/** Email "From" address for verification/invite emails, e.g. "noreply@example.com" */
 	emailFromAddress?: string;
+	/** GitHub repo (owner/name) for OIDC federation, e.g. "ianshan0915/chatbot-platform" */
+	githubRepo?: string;
 }
 
 export class ChatbotPlatformStack extends cdk.Stack {
@@ -60,14 +62,26 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		// ----------------------------------------------------------------
 		const appSecrets = new secretsmanager.Secret(this, "AppSecrets", {
 			secretName: "chatbot-platform/app-secrets",
-			description: "Chatbot Platform application secrets",
+			description: "Chatbot Platform application secrets (JWT_SECRET auto-generated)",
 			generateSecretString: {
 				secretStringTemplate: JSON.stringify({
 					JWT_SECRET: "",
-					ENCRYPTION_ROOT_KEY: "",
 				}),
 				generateStringKey: "JWT_SECRET",
 				excludePunctuation: true,
+				passwordLength: 64,
+			},
+		});
+
+		// ENCRYPTION_ROOT_KEY needs to be a 64-char hex string (32 bytes).
+		// Generate it as a separate secret since CDK can only auto-generate one field.
+		const encryptionKeySecret = new secretsmanager.Secret(this, "EncryptionKey", {
+			secretName: "chatbot-platform/encryption-key",
+			description: "AES-256 envelope encryption root key (64 hex chars)",
+			generateSecretString: {
+				excludePunctuation: true,
+				excludeUppercase: true, // hex chars only: 0-9 a-f
+				excludeCharacters: "ghijklmnopqrstuvwxyz", // restrict to hex
 				passwordLength: 64,
 			},
 		});
@@ -192,6 +206,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 
 		// Grant Secrets Manager read access
 		appSecrets.grantRead(taskDefinition.taskRole);
+		encryptionKeySecret.grantRead(taskDefinition.taskRole);
 
 		// Build DATABASE_URL from RDS secret
 		const dbSecret = database.secret!;
@@ -199,7 +214,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		const logGroup = new logs.LogGroup(this, "AppLogGroup", {
 			logGroupName: "/ecs/chatbot-platform",
 			retention: logs.RetentionDays.ONE_MONTH,
-			removalPolicy: cdk.RemovalPolicy.DESTROY,
+			removalPolicy: cdk.RemovalPolicy.RETAIN, // Keep logs for debugging failed deploys
 		});
 
 		const container = taskDefinition.addContainer("app", {
@@ -230,7 +245,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 			secrets: {
 				// Inject individual secret fields as env vars
 				JWT_SECRET: ecs.Secret.fromSecretsManager(appSecrets, "JWT_SECRET"),
-				ENCRYPTION_ROOT_KEY: ecs.Secret.fromSecretsManager(appSecrets, "ENCRYPTION_ROOT_KEY"),
+				ENCRYPTION_ROOT_KEY: ecs.Secret.fromSecretsManager(encryptionKeySecret),
 				// RDS credentials — construct DATABASE_URL in the container
 				DB_HOST: ecs.Secret.fromSecretsManager(dbSecret, "host"),
 				DB_PORT: ecs.Secret.fromSecretsManager(dbSecret, "port"),
@@ -274,6 +289,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 					: {}),
 				// Health check configuration
 				healthCheckGracePeriod: cdk.Duration.seconds(120),
+				circuitBreaker: { rollback: true }, // Auto-rollback on repeated task failures
 			},
 		);
 
@@ -360,5 +376,38 @@ export class ChatbotPlatformStack extends cdk.Stack {
 			value: `email-smtp.${this.region}.amazonaws.com:587`,
 			description: "SES SMTP endpoint",
 		});
+
+		// ----------------------------------------------------------------
+		// GitHub Actions OIDC — keyless AWS auth for CI/CD
+		// ----------------------------------------------------------------
+		if (props.githubRepo) {
+			const ghOidcProvider = new iam.OpenIdConnectProvider(this, "GitHubOidc", {
+				url: "https://token.actions.githubusercontent.com",
+				clientIds: ["sts.amazonaws.com"],
+			});
+
+			const deployRole = new iam.Role(this, "GitHubActionsRole", {
+				roleName: "chatbot-platform-github-actions",
+				assumedBy: new iam.WebIdentityPrincipal(
+					ghOidcProvider.openIdConnectProviderArn,
+					{
+						StringLike: {
+							"token.actions.githubusercontent.com:sub": `repo:${props.githubRepo}:*`,
+						},
+						StringEquals: {
+							"token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+						},
+					},
+				),
+				managedPolicies: [
+					iam.ManagedPolicy.fromAwsManagedPolicyName("AdministratorAccess"),
+				],
+			});
+
+			new cdk.CfnOutput(this, "GitHubActionsRoleArn", {
+				value: deployRole.roleArn,
+				description: "IAM role ARN for GitHub Actions — set as AWS_DEPLOY_ROLE_ARN secret",
+			});
+		}
 	}
 }
