@@ -59,7 +59,7 @@ async function main() {
 	// Initialize services
 	const crypto = createCryptoService();
 	const processPool = new ProcessPool();
-	const storageService = createStorageService();
+	const storageService = await createStorageService();
 	const agentExecutor = new AgentExecutor({ db, crypto, storage: storageService });
 	const artifactCollector = new ArtifactCollector(db, storageService);
 	const taskQueueService = new TaskQueueService(db, storageService, agentExecutor, artifactCollector);
@@ -84,6 +84,8 @@ async function main() {
 	if (!isDev) {
 		app.set("trust proxy", 1);
 		app.use((req, res, next) => {
+			// Skip redirect for health checks (ALB sends HTTP internally)
+			if (req.path === "/healthz") return next();
 			if (req.headers["x-forwarded-proto"] !== "https") {
 				return res.redirect(301, `https://${req.headers.host}${req.url}`);
 			}

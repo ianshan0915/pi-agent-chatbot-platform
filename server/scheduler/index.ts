@@ -33,7 +33,7 @@ async function main() {
 	// Initialize services
 	const db = createDatabase();
 	const crypto = createCryptoService();
-	const storage = createStorageService();
+	const storage = await createStorageService();
 
 	// Create worker
 	const worker = new SchedulerWorker(db, crypto, storage);

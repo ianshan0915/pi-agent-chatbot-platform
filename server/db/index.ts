@@ -7,11 +7,14 @@ let _db: Database | null = null;
 export function createDatabase(connectionString?: string): Database {
 	if (_db) return _db;
 
+	const connString = connectionString || process.env.DATABASE_URL;
 	const pool = new Pool({
-		connectionString: connectionString || process.env.DATABASE_URL,
+		connectionString: connString,
 		max: 20,
 		idleTimeoutMillis: 30_000,
 		connectionTimeoutMillis: 5_000,
+		// Enable SSL for RDS (production). The pg library ignores sslmode in the URL.
+		...(process.env.NODE_ENV === "production" ? { ssl: { rejectUnauthorized: false } } : {}),
 	});
 
 	pool.on("error", (err) => {

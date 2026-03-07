@@ -1,0 +1,23 @@
+{
+	"name": "chatbot-platform-infra",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "tsc",
+		"cdk": "cdk",
+		"synth": "cdk synth",
+		"deploy": "cdk deploy",
+		"diff": "cdk diff",
+		"destroy": "cdk destroy"
+	},
+	"dependencies": {
+		"aws-cdk-lib": "^2.180.0",
+		"constructs": "^10.4.2",
+		"source-map-support": "^0.5.21"
+	},
+	"devDependencies": {
+		"aws-cdk": "^2.180.0",
+		"typescript": "^5.7.3"
+	}
+}

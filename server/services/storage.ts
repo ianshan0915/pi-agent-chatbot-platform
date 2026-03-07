@@ -104,10 +104,16 @@ export class LocalFsStorageService implements StorageService {
 	}
 }
 
-export function createStorageService(): StorageService {
+export async function createStorageService(): Promise<StorageService> {
 	const backend = process.env.STORAGE_BACKEND || "filesystem";
 	if (backend === "filesystem") {
 		return new LocalFsStorageService(process.env.STORAGE_BASE_DIR);
 	}
-	throw new Error(`Unknown STORAGE_BACKEND: ${backend}. Only "filesystem" is supported in Phase 3.`);
+	if (backend === "s3") {
+		const bucket = process.env.S3_BUCKET_NAME;
+		if (!bucket) throw new Error("S3_BUCKET_NAME is required when STORAGE_BACKEND=s3");
+		const { S3StorageService } = await import("./s3-storage.js");
+		return new S3StorageService(bucket, process.env.AWS_REGION);
+	}
+	throw new Error(`Unknown STORAGE_BACKEND: ${backend}. Supported: "filesystem", "s3".`);
 }

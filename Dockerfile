@@ -31,6 +31,7 @@ RUN npm install -g tsx
 # - poppler-utils: PDF → PNG slide images (pdftoppm)
 # - fonts-noto/fonts-dejavu: font coverage for rendering
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
     python3 python3-pip python3-venv \
     libreoffice-impress \
     poppler-utils \
@@ -53,9 +54,11 @@ COPY src/node-stub/ ./src/node-stub/
 COPY tsconfig.json ./
 COPY vite.config.ts ./
 
+COPY scripts/entrypoint.sh ./scripts/
+
 ENV NODE_ENV=production
 ENV PORT=3001
 
 EXPOSE 3001
 
-CMD ["tsx", "server/index.ts"]
+CMD ["sh", "scripts/entrypoint.sh"]
