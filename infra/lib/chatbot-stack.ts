@@ -18,8 +18,6 @@ export interface ChatbotPlatformStackProps extends cdk.StackProps {
 	domainName?: string;
 	/** Root hosted zone name, e.g. "example.com" */
 	hostedZoneName?: string;
-	/** Existing hosted zone ID (skip lookup if provided) */
-	hostedZoneId?: string;
 	/** Email "From" address for verification/invite emails, e.g. "noreply@example.com" */
 	emailFromAddress?: string;
 }
@@ -135,16 +133,11 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		let certificate: acm.ICertificate | undefined;
 
 		if (props.domainName && props.hostedZoneName) {
-			if (props.hostedZoneId) {
-				hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, "HostedZone", {
-					hostedZoneId: props.hostedZoneId,
-					zoneName: props.hostedZoneName,
-				});
-			} else {
-				hostedZone = new route53.HostedZone(this, "HostedZone", {
-					zoneName: props.hostedZoneName,
-				});
-			}
+			// Keep the CDK-managed HostedZone to preserve CloudFormation references.
+			// Switching to fromHostedZoneAttributes breaks the DNS RecordSet replacement.
+			hostedZone = new route53.HostedZone(this, "HostedZone", {
+				zoneName: props.hostedZoneName,
+			});
 
 			certificate = new acm.Certificate(this, "Certificate", {
 				domainName: props.domainName,
@@ -295,6 +288,9 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		// Enable stickiness for WebSocket connections
 		fargateService.targetGroup.enableCookieStickiness(cdk.Duration.days(1));
 
+		// Speed up deployments — WS clients auto-reconnect, no need for long drain
+		fargateService.targetGroup.setAttribute("deregistration_delay.timeout_seconds", "30");
+
 		// ALB idle timeout — WebSocket connections can be long-lived
 		fargateService.loadBalancer.setAttribute("idle_timeout.timeout_seconds", "3600");
 
@@ -333,7 +329,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 			description: "Secrets Manager ARN — update ENCRYPTION_ROOT_KEY after deploy",
 		});
 
-		if (hostedZone && !props.hostedZoneId) {
+		if (hostedZone) {
 			const ns = (hostedZone as route53.HostedZone).hostedZoneNameServers;
 			if (ns) {
 				new cdk.CfnOutput(this, "NameServers", {
