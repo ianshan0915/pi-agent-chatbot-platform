@@ -18,6 +18,8 @@ export interface ChatbotPlatformStackProps extends cdk.StackProps {
 	domainName?: string;
 	/** Root hosted zone name, e.g. "example.com" */
 	hostedZoneName?: string;
+	/** Route 53 hosted zone ID (from your domain registrar/existing zone) */
+	hostedZoneId?: string;
 	/** Email "From" address for verification/invite emails, e.g. "noreply@example.com" */
 	emailFromAddress?: string;
 	/** GitHub repo (owner/name) for OIDC federation, e.g. "ianshan0915/chatbot-platform" */
@@ -146,10 +148,12 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		let hostedZone: route53.IHostedZone | undefined;
 		let certificate: acm.ICertificate | undefined;
 
-		if (props.domainName && props.hostedZoneName) {
-			// Keep the CDK-managed HostedZone to preserve CloudFormation references.
-			// Switching to fromHostedZoneAttributes breaks the DNS RecordSet replacement.
-			hostedZone = new route53.HostedZone(this, "HostedZone", {
+		if (props.domainName && props.hostedZoneName && props.hostedZoneId) {
+			// Use the EXISTING hosted zone from the domain registrar.
+			// Do NOT create a new zone — that causes orphan zones and DNS mismatch
+			// since the registrar NS records point to the original zone.
+			hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, "HostedZone", {
+				hostedZoneId: props.hostedZoneId,
 				zoneName: props.hostedZoneName,
 			});
 
@@ -162,10 +166,14 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		// ----------------------------------------------------------------
 		// SES — email delivery (verification emails, invites, job results)
 		// ----------------------------------------------------------------
-		// SES email identity for the domain (auto-adds DKIM DNS records if hostedZone exists)
-		if (props.hostedZoneName && hostedZone) {
+		// SES email identity for the domain.
+		// Using Identity.domain() instead of Identity.publicHostedZone() because we
+		// reference an existing zone via fromHostedZoneAttributes (returns IHostedZone,
+		// not IPublicHostedZone). DKIM DNS records must be added manually to the zone
+		// after first deploy (check SES console for the 3 CNAME records).
+		if (props.hostedZoneName) {
 			new ses.EmailIdentity(this, "SesIdentity", {
-				identity: ses.Identity.publicHostedZone(hostedZone as route53.IPublicHostedZone),
+				identity: ses.Identity.domain(props.hostedZoneName),
 			});
 		}
 
@@ -344,16 +352,6 @@ export class ChatbotPlatformStack extends cdk.Stack {
 			value: appSecrets.secretArn,
 			description: "Secrets Manager ARN — update ENCRYPTION_ROOT_KEY after deploy",
 		});
-
-		if (hostedZone) {
-			const ns = (hostedZone as route53.HostedZone).hostedZoneNameServers;
-			if (ns) {
-				new cdk.CfnOutput(this, "NameServers", {
-					value: cdk.Fn.join(", ", ns),
-					description: "Route 53 name servers — point your domain registrar here",
-				});
-			}
-		}
 
 		if (props.domainName) {
 			new cdk.CfnOutput(this, "AppUrl", {

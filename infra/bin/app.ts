@@ -12,5 +12,6 @@ new ChatbotPlatformStack(app, "ChatbotPlatformStack", {
 	},
 	domainName: "chat.pi-agents.nl",
 	hostedZoneName: "pi-agents.nl",
+	hostedZoneId: "Z0897381PG8CDRSBMFMM",
 	githubRepo: "ianshan0915/chatbot-platform",
 });

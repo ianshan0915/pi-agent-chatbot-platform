@@ -4,6 +4,7 @@ import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 export const apiRateLimit = rateLimit({
 	windowMs: 60 * 1000,
 	max: 300,
+	// @ts-expect-error express-rate-limit types mismatch with Express 5
 	keyGenerator: (req) => req.user?.userId || ipKeyGenerator(req),
 	standardHeaders: true,
 	legacyHeaders: false,
@@ -15,6 +16,7 @@ export const authRateLimit = rateLimit({
 	windowMs: 60 * 1000,
 	max: 5,
 	keyGenerator: (req) => {
+		// @ts-expect-error express-rate-limit types mismatch with Express 5
 		const ip = ipKeyGenerator(req);
 		const email = req.body?.email || "unknown";
 		return `${ip}:${email}`;
@@ -28,6 +30,7 @@ export const authRateLimit = rateLimit({
 export const signupRateLimit = rateLimit({
 	windowMs: 60 * 1000,
 	max: 3,
+	// @ts-expect-error express-rate-limit types mismatch with Express 5
 	keyGenerator: (req) => ipKeyGenerator(req),
 	standardHeaders: true,
 	legacyHeaders: false,

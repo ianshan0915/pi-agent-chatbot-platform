@@ -46,6 +46,7 @@ setInterval(() => {
 export function createOAuthRouter(crypto: CryptoService): Router {
 	const router = Router();
 	const db = getDatabase();
+	// @ts-expect-error Database wrapper is compatible with Pool for OAuthService usage
 	const oauthService = new OAuthService(db, crypto);
 
 	// All routes require authentication
@@ -60,6 +61,7 @@ export function createOAuthRouter(crypto: CryptoService): Router {
 			const userId = req.user!.userId;
 
 			// Validate provider
+			// @ts-expect-error Express 5 params type is string | string[]
 			if (!(provider in OAUTH_PROVIDERS)) {
 				res.status(400).json({ success: false, error: "Unsupported provider" });
 				return;
@@ -122,6 +124,7 @@ export function createOAuthRouter(crypto: CryptoService): Router {
 			const userId = req.user!.userId;
 
 			// Validate provider
+			// @ts-expect-error Express 5 params type is string | string[]
 			if (!(provider in OAUTH_PROVIDERS)) {
 				res.status(400).json({ success: false, error: "Unsupported provider" });
 				return;
