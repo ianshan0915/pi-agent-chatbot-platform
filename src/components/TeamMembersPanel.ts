@@ -26,6 +26,19 @@ interface SearchResult {
 	team_id: string;
 }
 
+interface InviteToken {
+	id: string;
+	token: string;
+	label: string | null;
+	email: string | null;
+	max_uses: number;
+	use_count: number;
+	expires_at: string;
+	created_at: string;
+	created_by_email: string;
+	url?: string;
+}
+
 @customElement("team-members-tab")
 export class TeamMembersTab extends SettingsTab {
 	/** Set by the caller before opening the dialog. */
@@ -50,6 +63,15 @@ export class TeamMembersTab extends SettingsTab {
 	@state() private newRole = "member";
 	@state() private submitting = false;
 
+	// Invite management
+	@state() private invites: InviteToken[] = [];
+	@state() private showInviteForm = false;
+	@state() private inviteEmail = "";
+	@state() private inviteLabel = "";
+	@state() private inviteMaxUses = "10";
+	@state() private creatingInvite = false;
+	@state() private copiedInviteId: string | null = null;
+
 	private searchTimer: ReturnType<typeof setTimeout> | undefined;
 
 	getTabName(): string {
@@ -59,6 +81,7 @@ export class TeamMembersTab extends SettingsTab {
 	override connectedCallback() {
 		super.connectedCallback();
 		this.loadMembers();
+		this.loadInvites();
 	}
 
 	private fetchApi = (url: string, options?: RequestInit) => apiFetch(url, options, this.getToken);
@@ -196,6 +219,83 @@ export class TeamMembersTab extends SettingsTab {
 		}
 	}
 
+	private async loadInvites() {
+		try {
+			const result = await this.fetchApi("/api/invites");
+			if (result.success) {
+				this.invites = result.data.invites;
+			}
+		} catch (err) {
+			console.error("Failed to load invites:", err);
+		}
+	}
+
+	private async handleCreateInvite() {
+		this.creatingInvite = true;
+		this.statusMessage = "";
+		try {
+			const result = await this.fetchApi("/api/invites", {
+				method: "POST",
+				body: JSON.stringify({
+					email: this.inviteEmail || undefined,
+					label: this.inviteLabel || undefined,
+					maxUses: parseInt(this.inviteMaxUses) || 10,
+				}),
+			});
+			if (result.success) {
+				const invite = result.data.invite;
+				this.statusMessage = "Invite link created!";
+				this.statusType = "success";
+				this.inviteEmail = "";
+				this.inviteLabel = "";
+				this.inviteMaxUses = "10";
+				this.showInviteForm = false;
+				await this.loadInvites();
+				// Auto-copy the new invite URL
+				if (invite.url) {
+					await navigator.clipboard.writeText(invite.url);
+					this.statusMessage = "Invite link created and copied to clipboard!";
+				}
+			} else {
+				this.statusMessage = result.error || "Failed to create invite";
+				this.statusType = "error";
+			}
+		} catch {
+			this.statusMessage = "Network error";
+			this.statusType = "error";
+		} finally {
+			this.creatingInvite = false;
+		}
+	}
+
+	private async handleCopyInvite(invite: InviteToken) {
+		const url = `${window.location.origin}/?invite=${invite.token}`;
+		await navigator.clipboard.writeText(url);
+		this.copiedInviteId = invite.id;
+		setTimeout(() => { this.copiedInviteId = null; }, 2000);
+	}
+
+	private async handleRevokeInvite(invite: InviteToken) {
+		try {
+			const result = await this.fetchApi(`/api/invites/${invite.id}`, { method: "DELETE" });
+			if (result.success) {
+				this.statusMessage = "Invite revoked.";
+				this.statusType = "success";
+				await this.loadInvites();
+			} else {
+				this.statusMessage = result.error || "Failed to revoke invite";
+				this.statusType = "error";
+			}
+		} catch {
+			this.statusMessage = "Network error";
+			this.statusType = "error";
+		}
+	}
+
+	private isExpired(dateStr: string): boolean {
+		return new Date(dateStr) < new Date();
+	}
+
 	private formatDate(dateStr: string | null): string {
 		if (!dateStr) return "Never";
 		return new Date(dateStr).toLocaleDateString(undefined, {
@@ -244,6 +344,74 @@ export class TeamMembersTab extends SettingsTab {
 						`)}
 					</div>
 				`}
+
+				<!-- Invite links -->
+				<div class="border-t border-border pt-4">
+					<div class="flex items-center justify-between mb-2">
+						<p class="text-sm font-medium">Invite Links</p>
+						${!this.showInviteForm ? html`
+							<button
+								class="text-xs bg-primary text-primary-foreground rounded px-3 py-1 cursor-pointer hover:opacity-90"
+								@click=${() => { this.showInviteForm = true; }}
+							>Generate Link</button>
+						` : ""}
+					</div>
+
+					${this.showInviteForm ? html`
+						<div class="flex flex-col gap-2 mb-3 p-3 border border-border rounded-md bg-muted/30">
+							<div class="flex gap-2">
+								<input type="email" class="flex-1 text-sm border border-border rounded-md px-3 py-2 bg-background" placeholder="Restrict to email (optional)" .value=${this.inviteEmail} @input=${(e: Event) => { this.inviteEmail = (e.target as HTMLInputElement).value; }} />
+								<input type="text" class="flex-1 text-sm border border-border rounded-md px-3 py-2 bg-background" placeholder="Label (optional)" .value=${this.inviteLabel} @input=${(e: Event) => { this.inviteLabel = (e.target as HTMLInputElement).value; }} />
+							</div>
+							<div class="flex gap-2 items-center">
+								<label class="text-xs text-muted-foreground">Max uses:</label>
+								<input type="number" min="1" class="w-20 text-sm border border-border rounded-md px-3 py-2 bg-background" .value=${this.inviteMaxUses} @input=${(e: Event) => { this.inviteMaxUses = (e.target as HTMLInputElement).value; }} />
+								<div class="flex-1"></div>
+								<button
+									class="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+									@click=${() => { this.showInviteForm = false; }}
+								>Cancel</button>
+								<button
+									class="text-sm bg-primary text-primary-foreground rounded-md px-4 py-2 disabled:opacity-50 cursor-pointer"
+									?disabled=${this.creatingInvite}
+									@click=${this.handleCreateInvite}
+								>${this.creatingInvite ? "Creating..." : "Create Invite"}</button>
+							</div>
+						</div>
+					` : ""}
+
+					${this.invites.length === 0 ? html`
+						<p class="text-xs text-muted-foreground">No active invite links. Generate one to invite team members.</p>
+					` : html`
+						<div class="flex flex-col gap-2">
+							${this.invites.map(inv => html`
+								<div class="flex items-center justify-between px-3 py-2 border border-border rounded-md ${this.isExpired(inv.expires_at) ? "opacity-50" : ""}">
+									<div class="flex flex-col min-w-0">
+										<span class="text-sm font-medium truncate">
+											${inv.label || (inv.email ? `For ${inv.email}` : "General invite")}
+										</span>
+										<span class="text-xs text-muted-foreground">
+											${inv.use_count}/${inv.max_uses} used · Expires ${this.formatDate(inv.expires_at)}
+											${this.isExpired(inv.expires_at) ? " (expired)" : ""}
+										</span>
+									</div>
+									<div class="flex items-center gap-2 flex-shrink-0">
+										${!this.isExpired(inv.expires_at) && inv.use_count < inv.max_uses ? html`
+											<button
+												class="text-xs text-primary border border-primary rounded px-2 py-1 hover:bg-primary/10 cursor-pointer"
+												@click=${() => this.handleCopyInvite(inv)}
+											>${this.copiedInviteId === inv.id ? "Copied!" : "Copy Link"}</button>
+										` : ""}
+										<button
+											class="text-xs text-destructive border border-destructive rounded px-2 py-1 hover:bg-destructive/10 cursor-pointer"
+											@click=${() => this.handleRevokeInvite(inv)}
+										>Revoke</button>
+									</div>
+								</div>
+							`)}
+						</div>
+					`}
+				</div>
 
 				<!-- Add existing user by search -->
 				<div class="border-t border-border pt-4">
