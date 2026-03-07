@@ -56,7 +56,7 @@ COPY vite.config.ts ./
 
 COPY scripts/entrypoint.sh ./scripts/
 
-RUN groupadd --system app && useradd --system --gid app app
+RUN groupadd --system app && useradd --system --gid app --create-home app
 RUN chown -R app:app /app
 
 ENV NODE_ENV=production
