@@ -107,15 +107,9 @@ export class SdkBridge {
 	private ready = false;
 	private sessionCreating = false;
 	private pendingMessages: Array<{ raw: string; parsed: any }> = [];
-	// User-facing model — tracks what the client selected, independent of the SDK's
-	// internal model resolution. On AWS, the SDK may auto-detect Bedrock IAM credentials
-	// and resolve to a Bedrock model (e.g., "us.anthropic.claude-opus-4-6-v1") even when
-	// the user selected "claude-opus-4-6" on the "anthropic" provider. This field ensures
-	// we always return the user's chosen model in get_state / state_update responses.
-	private clientModel: { id: string; provider: string } | null = null;
 	// Providers explicitly configured via team API keys or user OAuth (via setRuntimeApiKey).
 	// Used to prefer these over auto-detected providers (e.g., AWS IAM → Bedrock) when
-	// resolving the default model.
+	// resolving the default model in sendSyntheticGetState().
 	private configuredProviders = new Set<string>();
 	private unsubscribeSession: (() => void) | null = null;
 
@@ -430,11 +424,20 @@ export class SdkBridge {
 
 		if (modelId && provider) {
 			model = modelRegistry.find(provider, modelId);
-			if (model) {
-				// Lock in the user's chosen model for client-facing responses
-				this.clientModel = { id: model.id, provider: model.provider };
-			} else {
+			if (!model) {
 				console.warn(`[sdk-bridge] Model ${provider}/${modelId} not found in registry, using default`);
+			}
+		}
+
+		// If no model resolved, prefer a model from explicitly configured providers
+		// over auto-detected ones (e.g., AWS IAM → Bedrock)
+		if (!model) {
+			const available = modelRegistry.getAvailable();
+			if (available.length > 0) {
+				const configuredModel = available.find(
+					(m) => this.configuredProviders.has(m.provider),
+				);
+				model = configuredModel ?? available[0];
 			}
 		}
 
@@ -483,18 +486,12 @@ export class SdkBridge {
 		this.sessionCreating = false;
 		console.log(`[sdk-bridge] Session created: ${this.sessionId} (model: ${session.model?.provider}/${session.model?.id})`);
 
-		// Push model state to client. Use clientModel (the user's explicit choice) if
-		// available, falling back to the SDK's resolved model only when the user had no
-		// preference (e.g., brand-new session with no model selection).
-		const modelForClient = this.clientModel
-			?? (session.model ? { id: session.model.id, provider: session.model.provider } : null);
-		if (modelForClient) {
-			// Update clientModel if it wasn't set (no user preference — accept SDK default)
-			if (!this.clientModel) this.clientModel = modelForClient;
+		// Push model state to client so it knows the real model after lazy creation
+		if (session.model) {
 			try {
 				this.ws.send(JSON.stringify({
 					type: "state_update",
-					model: modelForClient,
+					model: { id: session.model.id, provider: session.model.provider },
 				}));
 			} catch {}
 		}
@@ -673,8 +670,6 @@ export class SdkBridge {
 				const model = this.session.modelRegistry.find(parsed.provider, parsed.modelId);
 				if (model) {
 					this.session.setModel(model).then(() => {
-						// User explicitly changed model — update clientModel
-						this.clientModel = { id: model.id, provider: model.provider };
 						this.sendResponse(id, { model: { id: model.id, provider: model.provider } });
 					}).catch((err) => {
 						this.sendError(id, err.message);
@@ -688,7 +683,6 @@ export class SdkBridge {
 			case "cycle_model":
 				this.session.cycleModel(parsed.direction).then((result) => {
 					if (result) {
-						this.clientModel = { id: result.model.id, provider: result.model.provider };
 						this.sendResponse(id, {
 							model: { id: result.model.id, provider: result.model.provider },
 							thinkingLevel: result.thinkingLevel,
@@ -863,20 +857,6 @@ export class SdkBridge {
 	 * Send a synthetic get_state response when no session exists yet.
 	 */
 	private sendSyntheticGetState(requestId: string): void {
-		// If clientModel is already set (e.g., from a previous get_state or session), use it
-		if (this.clientModel) {
-			this.ws.send(JSON.stringify({
-				id: requestId,
-				type: "response",
-				data: {
-					model: this.clientModel,
-					thinkingLevel: "off",
-					isStreaming: false,
-				},
-			}));
-			return;
-		}
-
 		const optModel = this.options.model && this.options.model !== "loading..."
 			? this.options.model : null;
 		let model: { id: string; provider: string | null } | null = optModel
@@ -900,11 +880,6 @@ export class SdkBridge {
 			}
 		}
 
-		// Lock in the resolved model as clientModel
-		if (model && model.provider) {
-			this.clientModel = { id: model.id, provider: model.provider };
-		}
-
 		this.ws.send(JSON.stringify({
 			id: requestId,
 			type: "response",
@@ -925,10 +900,8 @@ export class SdkBridge {
 			return;
 		}
 
-		// Use clientModel (user's chosen model) over session.model (SDK-internal, may be Bedrock)
 		const sessionModel = this.session.model;
-		const model = this.clientModel
-			?? (sessionModel ? { id: sessionModel.id, provider: sessionModel.provider } : null);
+		const model = sessionModel ? { id: sessionModel.id, provider: sessionModel.provider } : null;
 		this.sendResponse(requestId, {
 			model,
 			thinkingLevel: this.session.thinkingLevel,
