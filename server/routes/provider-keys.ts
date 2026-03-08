@@ -12,7 +12,7 @@ import type { ProviderKeyRow } from "../db/types.js";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/permissions.js";
 import type { CryptoService } from "../services/crypto.js";
-import { PROVIDER_ENV_MAP } from "../ws-bridge.js";
+import { PROVIDER_ENV_MAP } from "../utils/provider-env-map.js";
 import { asyncRoute } from "../utils/async-handler.js";
 
 const VALID_PROVIDERS = new Set(Object.keys(PROVIDER_ENV_MAP));

@@ -56,7 +56,7 @@ export class RemoteAgent {
 	// These are expected by AgentInterface but are no-ops for remote agent
 	public streamFn: StreamFn = (() => {}) as any;
 	// Always return a dummy key so AgentInterface doesn't prompt for API keys
-	// (the real API key is managed server-side by the TenantBridge)
+	// (the real API key is managed server-side by the SdkBridge)
 	public getApiKey: (provider: string) => Promise<string | undefined> | string | undefined = () =>
 		"remote-agent-server-side";
 
@@ -202,11 +202,13 @@ export class RemoteAgent {
 	 */
 	async syncState(): Promise<void> {
 		const response = await this.sendCommand({ type: "get_state" });
+		console.log("[RemoteAgent] syncState response:", JSON.stringify(response));
 		if (response?.data) {
 			const data = response.data;
 			if (data.model) this._state.model = data.model;
 			this._state.thinkingLevel = data.thinkingLevel;
 			this._state.isStreaming = data.isStreaming;
+			console.log("[RemoteAgent] syncState applied model:", JSON.stringify(this._state.model));
 			// Notify UI so it picks up the updated model/state
 			this.emit({ type: "state-update", state: this._state } as any);
 		}
@@ -334,6 +336,13 @@ export class RemoteAgent {
 		// Handle reattachment notification — fetch fresh messages from server
 		if (data.type === "session_reattached") {
 			this.fetchMessages().catch(() => {});
+			return;
+		}
+
+		// Handle server-pushed state updates (e.g. model resolved after lazy session creation)
+		if (data.type === "state_update") {
+			if (data.model) this._state.model = data.model;
+			this.emit({ type: "state-update", state: this._state } as any);
 			return;
 		}
 

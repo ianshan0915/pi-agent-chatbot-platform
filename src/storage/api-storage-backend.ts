@@ -271,12 +271,13 @@ export class ApiStorageBackend implements StorageBackend {
 			store.set(key, data);
 			this.touchSession(key);
 
-			// Also update metadata cache
+			// Also update metadata cache — preserve existing lastModified if not provided
 			const metadataCache = this.getStore("sessions-metadata");
+			const existingMeta = metadataCache.get(key);
 			metadataCache.set(key, {
 				id: key,
 				title: data.title,
-				lastModified: data.lastModified ?? new Date().toISOString(),
+				lastModified: data.lastModified ?? existingMeta?.lastModified ?? new Date().toISOString(),
 				messageCount: data.messages?.length ?? data.messageCount ?? 0,
 				preview: data.preview,
 				modelId: data.modelId,

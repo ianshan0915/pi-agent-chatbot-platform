@@ -351,7 +351,7 @@ export class TaskQueueService {
 					try {
 						const msg = JSON.parse(line);
 
-						// Diagnostic logging — mirrors [rpc→ws] in agent-service.ts
+						// Diagnostic logging for RPC output
 						console.log(`[task-queue] [${task.id.slice(0, 8)}] rpc→ ${msg.type || "unknown"}`);
 
 						// Collect streaming text and track tool call names from message_update

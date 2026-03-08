@@ -37,22 +37,20 @@ import { createProjectsRouter } from "./routes/projects.js";
 import { createInvitesRouter } from "./routes/invites.js";
 import { requireAuth } from "./auth/middleware.js";
 import { createCryptoService } from "./services/crypto.js";
-import { ProcessPool } from "./services/process-pool.js";
 import { createStorageService } from "./services/storage.js";
 import { AgentExecutor } from "./services/agent-executor.js";
 import { ArtifactCollector } from "./services/artifact-collector.js";
 import { TaskQueueService } from "./services/task-queue.js";
 import { SessionStatusService } from "./services/session-status-service.js";
 import { OutputBufferService } from "./services/output-buffer.js";
-import { TenantBridge, type TenantBridgeOptions } from "./agent-service.js";
-import type { BridgeOptions } from "./ws-bridge.js";
+import { SdkBridge, type SdkBridgeOptions, type BridgeOptions } from "./sdk-bridge.js";
+import { SessionPool } from "./services/session-pool.js";
 import type { AgentProfileRow } from "./db/types.js";
 import { RENDERABLE_EXTENSIONS, BINARY_EXTENSIONS } from "../src/shared/file-extensions.js";
 import { seedSkills } from "./db/seed-skills.js";
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const isDev = process.env.NODE_ENV !== "production";
-
 async function main() {
 	// Initialize database and run migrations
 	const db = createDatabase();
@@ -60,7 +58,6 @@ async function main() {
 
 	// Initialize services
 	const crypto = createCryptoService();
-	const processPool = new ProcessPool();
 	const storageService = await createStorageService();
 	await seedSkills(db, storageService);
 	const agentExecutor = new AgentExecutor({ db, crypto, storage: storageService });
@@ -69,10 +66,11 @@ async function main() {
 	await taskQueueService.start();
 	const sessionStatusService = new SessionStatusService();
 	const outputBufferService = new OutputBufferService(db);
+	const sessionPool = new SessionPool();
 
-	// Wire process-stopped events to session status service
-	processPool.on("process-stopped", (sessionId: string, reason: string) => {
-		if (reason === "crash" || reason === "shutdown") {
+	// Wire session-stopped events to session status service
+	sessionPool.on("session-stopped", (sessionId: string, reason: string) => {
+		if (reason === "error" || reason === "shutdown") {
 			sessionStatusService.setStatus(sessionId, "dead", db);
 		} else if (reason === "idle") {
 			sessionStatusService.setStatus(sessionId, "suspended", db);
@@ -165,7 +163,11 @@ async function main() {
 	});
 	// Detailed health (behind auth) with pool/queue stats
 	app.get("/healthz/details", requireAuth, (_req, res) => {
-		res.json({ status: "ok", processPool: processPool.stats(), taskQueue: taskQueueService.stats() });
+		res.json({
+			status: "ok",
+			sessionPool: sessionPool.stats(),
+			taskQueue: taskQueueService.stats(),
+		});
 	});
 
 	// 1.7 WebSocket per-user connection tracking
@@ -177,7 +179,7 @@ async function main() {
 
 	// --- API Routes ---
 	app.use("/api/auth", authRateLimit, authRouter);
-	app.use("/api/sessions", apiRateLimit, createSessionsRouter(sessionStatusService, processPool));
+	app.use("/api/sessions", apiRateLimit, createSessionsRouter(sessionStatusService, sessionPool));
 	app.use("/api/settings", requireAuth, apiRateLimit, settingsRouter);
 	app.use("/api/import", requireAuth, apiRateLimit, importRouter);
 	app.use("/api/provider-keys", apiRateLimit, createProviderKeysRouter(crypto));
@@ -307,7 +309,7 @@ async function main() {
 			);
 			if (sessionResult.rows.length === 0) {
 				// Session not in DB yet (async client save may be in-flight).
-				// Keep sessionId so TenantBridge can check the process pool for
+				// Keep sessionId so SdkBridge can check the session pool for
 				// reattachment. Pool-level userId check prevents cross-user access.
 			} else if (sessionResult.rows[0].user_id !== user.userId) {
 				console.warn(`[server] User ${user.userId} attempted to access session ${sessionId} owned by ${sessionResult.rows[0].user_id}`);
@@ -360,8 +362,8 @@ async function main() {
 			}
 		}
 
-		// Use TenantBridge with server-side key management
-		const tenantOptions: TenantBridgeOptions = {
+		// Create SDK bridge
+		const sdkOptions: SdkBridgeOptions = {
 			...options,
 			user: {
 				userId: user.userId,
@@ -370,7 +372,7 @@ async function main() {
 				role: user.role,
 			},
 			sessionId,
-			processPool,
+			sessionPool,
 			crypto,
 			db,
 			storage: storageService,
@@ -379,9 +381,9 @@ async function main() {
 			profileSkillIds,
 			profileFileIds,
 			agentProfileId,
+			serverPort: PORT,
 		};
-
-		const bridge = new TenantBridge(ws, tenantOptions);
+		const bridge = new SdkBridge(ws, sdkOptions);
 		bridge.start();
 	});
 
@@ -460,7 +462,7 @@ async function main() {
 	const gracefulShutdown = async (signal: string) => {
 		console.log(`[server] Received ${signal}, shutting down gracefully...`);
 		await taskQueueService.shutdown();
-		await processPool.shutdown();
+		await sessionPool.shutdown();
 		server.close(() => {
 			console.log("[server] HTTP server closed");
 			process.exit(0);
