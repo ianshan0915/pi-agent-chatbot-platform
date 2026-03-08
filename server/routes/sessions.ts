@@ -8,7 +8,7 @@ import { requireAuthOrToken } from "../auth/middleware.js";
 import { isOwner } from "../auth/permissions.js";
 import { asyncRoute } from "../utils/async-handler.js";
 import type { SessionStatusService } from "../services/session-status-service.js";
-import type { ProcessPool } from "../services/process-pool.js";
+import type { SessionPool } from "../services/session-pool.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -49,7 +49,7 @@ async function getOwnedSession(
 
 export function createSessionsRouter(
 	sessionStatusService: SessionStatusService,
-	processPool: ProcessPool,
+	sessionPool: SessionPool,
 ): Router {
 	const router = Router();
 
@@ -102,14 +102,14 @@ export function createSessionsRouter(
 		const session = await getOwnedSession(req, res);
 		if (!session) return;
 
-		const processInfo = processPool.get(session.id);
-		if (!processInfo || !processInfo.process.stdin) {
-			res.status(404).json({ success: false, error: "No active process for this session" });
+		const sessionInfo = sessionPool.get(session.id);
+		if (!sessionInfo) {
+			res.status(404).json({ success: false, error: "No active session" });
 			return;
 		}
 
 		try {
-			processInfo.process.stdin.write(JSON.stringify({ type: "abort" }) + "\n");
+			await sessionInfo.session.abort();
 			res.json({ success: true });
 		} catch (err: any) {
 			res.status(500).json({ success: false, error: "Failed to send abort signal" });
@@ -187,6 +187,15 @@ export function createSessionsRouter(
 		const db = getDatabase();
 		const { title, modelId, provider, thinkingLevel, artifactsCache, projectId } = req.body;
 
+		// Only bump last_modified when a field value actually differs from what's stored
+		const hasChanges =
+			(title != null && title !== session.title) ||
+			(modelId != null && modelId !== session.model_id) ||
+			(provider != null && provider !== session.provider) ||
+			(thinkingLevel != null && thinkingLevel !== session.thinking_level) ||
+			artifactsCache != null ||
+			projectId !== undefined;
+
 		// Build dynamic SET clause — projectId needs special handling (explicit null clears it)
 		const setClauses = [
 			"title = COALESCE($1, title)",
@@ -194,7 +203,7 @@ export function createSessionsRouter(
 			"provider = COALESCE($3, provider)",
 			"thinking_level = COALESCE($4, thinking_level)",
 			"artifacts_cache = COALESCE($6, artifacts_cache)",
-			"last_modified = NOW()",
+			...(hasChanges ? ["last_modified = NOW()"] : []),
 		];
 		const params: any[] = [
 			title ?? null,

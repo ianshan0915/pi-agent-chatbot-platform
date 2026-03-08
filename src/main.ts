@@ -55,7 +55,6 @@ import {
 	Plus,
 	Puzzle,
 	Settings,
-	Sparkles,
 	Square,
 	Trash2,
 	Wrench,
@@ -141,7 +140,7 @@ let projects: ProjectInfo[] = [];
 let collapsedProjects = new Set<string>();
 let editingProjectId: string | null = null;
 let moveMenuSessionId: string | null = null;
-let organizingInProgress = false;
+let sessionSwitchGen = 0;
 
 // ============================================================================
 // Storage setup (ApiStorageBackend replaces IndexedDB)
@@ -265,6 +264,9 @@ const saveSession = async (force = false) => {
 const loadSession = async (sessionId: string): Promise<boolean> => {
 	if (!storage) return false;
 
+	// Bump generation so any in-flight switch from a previous click is discarded
+	const gen = ++sessionSwitchGen;
+
 	// If the session was running in the background, invalidate the cache
 	// so we fetch fresh data (including messages generated while away)
 	const bgStatus = sessionStatusMap.get(sessionId);
@@ -273,12 +275,14 @@ const loadSession = async (sessionId: string): Promise<boolean> => {
 	}
 
 	const sessionData = await storage.sessions.get(sessionId);
+	if (gen !== sessionSwitchGen) return false; // superseded by a newer switch
 	if (!sessionData) {
 		console.error("Session not found:", sessionId);
 		return false;
 	}
 
 	const metadata = await storage.sessions.getMetadata(sessionId);
+	if (gen !== sessionSwitchGen) return false; // superseded by a newer switch
 
 	// Store messages and artifact cache to restore after WebSocket reconnects
 	pendingSessionMessages = sessionData.messages;
@@ -345,6 +349,23 @@ async function loadSidebarSessions() {
 	} catch (err) {
 		console.error("Failed to load sidebar sessions:", err);
 	}
+}
+
+function formatRelativeAge(isoDate: string): string {
+	const diff = Date.now() - new Date(isoDate).getTime();
+	const mins = Math.floor(diff / 60000);
+	if (mins < 1) return "now";
+	if (mins < 60) return `${mins}m`;
+	const hrs = Math.floor(mins / 60);
+	if (hrs < 24) return `${hrs}h`;
+	const days = Math.floor(hrs / 24);
+	if (days < 7) return `${days}d`;
+	const weeks = Math.floor(days / 7);
+	if (weeks < 5) return `${weeks}w`;
+	const months = Math.floor(days / 30);
+	if (months < 12) return `${months}mo`;
+	const years = Math.floor(days / 365);
+	return `${years}y`;
 }
 
 interface SessionGroup {
@@ -463,26 +484,6 @@ async function moveSessionToProject(sessionId: string, projectId: string | null)
 	}
 }
 
-async function organizeUngrouped(): Promise<void> {
-	organizingInProgress = true;
-	renderApp();
-	try {
-		const res = await fetch("/api/projects/organize", {
-			method: "POST",
-			headers: { Authorization: `Bearer ${authClient.token}`, "Content-Type": "application/json" },
-		});
-		if (!res.ok) {
-			const data = await res.json().catch(() => ({}));
-			console.error("Organize failed:", data.error);
-		}
-		await Promise.all([fetchProjects(), loadSidebarSessions()]);
-	} catch (err) {
-		console.error("Failed to organize sessions:", err);
-	} finally {
-		organizingInProgress = false;
-		renderApp();
-	}
-}
 
 // ============================================================================
 // Dialog opener helper
@@ -558,7 +559,7 @@ function getWsUrl(): string {
 
 function trackCurrentModel(): void {
 	const model = remoteAgent?.state.model;
-	if (model?.id) {
+	if (model?.id && model.id !== "loading...") {
 		currentModelId = model.id;
 		currentProvider = model.provider;
 	}
@@ -596,7 +597,9 @@ function onAgentEvent(event: AgentEvent): void {
 		const cached = pendingToolArgs.get(event.toolCallId);
 		pendingToolArgs.delete(event.toolCallId);
 		if (cached?.args) {
-			const filePath = getRenderablePathFromArgs(cached.args);
+			// push_to_viewer is an explicit agent action — bypass temp directory filter
+			const isPushToViewer = cached.toolName === "push_to_viewer";
+			const filePath = getRenderablePathFromArgs(cached.args, { skipTempFilter: isPushToViewer });
 			const content = getContentFromArgs(cached.args);
 			const ext = filePath?.split(".").pop()?.toLowerCase();
 			// PPTX files need server-side conversion (LibreOffice → PNG slides),
@@ -653,7 +656,9 @@ async function onWebSocketOpen(): Promise<void> {
 	}
 
 	try {
+		console.log("[ws] syncState: calling...");
 		await remoteAgent.syncState();
+		console.log("[ws] syncState: done, model=", remoteAgent.state.model);
 		trackCurrentModel();
 		chatPanel.agentInterface?.requestUpdate();
 		// Fetch messages only for fresh sessions (not restored from storage).
@@ -751,7 +756,7 @@ function disconnectWebSocket(): void {
 			const userMsg = remoteAgent.state.messages.find(
 				(m: any) => m.role === "user" || m.role === "user-with-attachments",
 			);
-			if (userMsg) {
+			if (userMsg && "content" in userMsg) {
 				const text = typeof userMsg.content === "string"
 					? userMsg.content
 					: Array.isArray(userMsg.content)
@@ -913,14 +918,26 @@ function closeSessionStatusSSE(): void {
 
 /** Extract renderable file path from tool args (supports various arg shapes).
  *  Only returns paths for "final output" file types (documents, images, rich visuals).
- *  Filters out temp/skill files to keep the artifacts panel clean. */
-function getRenderablePathFromArgs(args: any): string | null {
+ *  Filters out skill/system-prompt files to keep the artifacts panel clean.
+ *  Temp directory (/tmp/) files are allowed — agents commonly generate outputs there. */
+function getRenderablePathFromArgs(
+	args: any,
+	opts?: { skipTempFilter?: boolean },
+): string | null {
 	if (!args || typeof args !== "object") return null;
 	const filePath = args.path || args.filePath || args.file_path || args.filename || "";
 	if (typeof filePath !== "string" || filePath.length === 0) return null;
-	// Skip files in temp directories (skill files, system prompt files, etc.)
-	if (filePath.startsWith("/tmp/") || filePath.includes("/pi-skills-") || filePath.includes("/pi-sysprompt-")) {
+	// Always skip platform-internal files (skill downloads, system prompt staging)
+	if (filePath.includes("/pi-skills-") || filePath.includes("/pi-sysprompt-")) {
 		return null;
+	}
+	// Skip temp directory files unless explicitly pushed (push_to_viewer) or binary output.
+	// Binary document/image types in /tmp/ are almost always agent-generated final outputs.
+	if (!opts?.skipTempFilter && filePath.startsWith("/tmp/")) {
+		const ext = filePath.split(".").pop()?.toLowerCase();
+		if (!ext || !BINARY_EXTENSIONS.has(ext)) {
+			return null;
+		}
 	}
 	const ext = filePath.split(".").pop()?.toLowerCase();
 	if (ext && ARTIFACT_AUTO_DETECT_EXTENSIONS.has(ext)) {
@@ -951,7 +968,10 @@ async function fetchAndCreateFileArtifact(filePath: string) {
 		const res = await fetch(`/api/agent-files?path=${encodeURIComponent(filePath)}`, {
 			headers: { Authorization: `Bearer ${authClient.token}` },
 		});
-		if (!res.ok) return;
+		if (!res.ok) {
+			console.warn(`[artifacts] Server returned ${res.status} for ${filePath}`);
+			return;
+		}
 		const data = await res.json();
 		// PPTX: server returns pre-rendered slide images + raw binary for download
 		if (data.encoding === "slides" && data.slides) {
@@ -978,7 +998,10 @@ async function reconstructFileArtifactsFromMessages(
 		for (const block of msg.content) {
 			if ((block as any).type !== "toolCall") continue;
 			const args = (block as any).arguments;
-			const filePath = getRenderablePathFromArgs(args);
+			const toolName = (block as any).name || (block as any).toolName || "";
+			const filePath = getRenderablePathFromArgs(args, {
+				skipTempFilter: toolName === "push_to_viewer",
+			});
 			const content = getContentFromArgs(args);
 			const ext = filePath?.split(".").pop()?.toLowerCase();
 			if (filePath && (ext === "pptx" || ext === "ppt")) {
@@ -1025,7 +1048,7 @@ function trackDirFromPath(filePath: string) {
  */
 function scanMessageForFileReferences(msg: AgentMessage) {
 	const panel = chatPanel?.artifactsPanel;
-	if (!panel || !msg.content || typeof msg.content === "string") return;
+	if (!panel || !("content" in msg) || !msg.content || typeof msg.content === "string") return;
 
 	for (const block of msg.content) {
 		if ((block as any).type !== "text") continue;
@@ -1189,6 +1212,7 @@ const renderApp = () => {
 	const renderSessionRow = (session: SessionMetadata) => {
 		const status = sessionStatusMap.get(session.id);
 		const isGenerating = status === "generating";
+		const isAlive = status === "idle" || status === "generating";
 		const isMoveOpen = moveMenuSessionId === session.id;
 		return html`
 		<div
@@ -1196,18 +1220,23 @@ const renderApp = () => {
 			@click=${() => loadSession(session.id)}
 		>
 			<span class="shrink-0">
-				${isGenerating ? html`<span class="animate-spin text-muted-foreground">${icon(LoaderCircle, "sm")}</span>` : icon(MessageSquare, "sm")}
+				${isGenerating
+					? html`<span class="text-green-500">${icon(LoaderCircle, "sm", "animate-spin")}</span>`
+					: isAlive
+						? html`<span class="inline-flex h-4 w-4 items-center justify-center"><span class="inline-flex h-2 w-2 rounded-full bg-green-500"></span></span>`
+						: icon(MessageSquare, "sm")}
 			</span>
 			<span class="flex-1 truncate">${session.title || "Untitled"}</span>
+			<span class="text-[10px] text-muted-foreground shrink-0 group-hover:hidden">${formatRelativeAge(session.lastModified || session.createdAt)}</span>
 			${isGenerating && session.id !== currentSessionId ? html`
 				<button
-					class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-orange-500/10 hover:text-orange-500 transition-opacity cursor-pointer"
+					class="hidden group-hover:flex p-0.5 rounded hover:bg-orange-500/10 hover:text-orange-500 transition-opacity cursor-pointer"
 					title="Stop generating"
 					@click=${(e: Event) => { e.stopPropagation(); abortSession(session.id); }}
 				>${icon(Square, "sm")}</button>
 			` : nothing}
 			<button
-				class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted transition-opacity cursor-pointer"
+				class="hidden group-hover:flex p-0.5 rounded hover:bg-muted transition-opacity cursor-pointer"
 				title="Move to project"
 				@click=${(e: Event) => {
 					e.stopPropagation();
@@ -1216,7 +1245,7 @@ const renderApp = () => {
 				}}
 			>${icon(FolderOpen, "sm")}</button>
 			<button
-				class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-destructive/10 hover:text-destructive transition-opacity cursor-pointer"
+				class="hidden group-hover:flex p-0.5 rounded hover:bg-destructive/10 hover:text-destructive transition-opacity cursor-pointer"
 				title="Delete session"
 				@click=${(e: Event) => { e.stopPropagation(); deleteSession(session.id); }}
 			>${icon(Trash2, "sm")}</button>
@@ -1382,23 +1411,6 @@ const renderApp = () => {
 										${group.sessions.map(renderSessionRow)}
 									</div>
 								`)}
-								${ungroupedSessions.length >= 3 ? html`
-									<div class="px-2 py-1">
-										<button
-											class="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium text-primary hover:bg-primary/10 transition-colors cursor-pointer border border-dashed border-primary/30"
-											?disabled=${organizingInProgress}
-											@click=${() => organizeUngrouped()}
-										>
-											${organizingInProgress ? html`
-												<span class="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin"></span>
-												<span>Organizing...</span>
-											` : html`
-												${icon(Sparkles, "sm")}
-												<span>Organize with AI</span>
-											`}
-										</button>
-									</div>
-								` : nothing}
 							` : nothing}
 						`}
 					</div>

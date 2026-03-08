@@ -1,7 +1,7 @@
 /**
  * Session-scoped tokens for the agent memory extension.
  *
- * Simple in-memory Map: TenantBridge issues a token when spawning a process,
+ * Simple in-memory Map: SdkBridge issues a token when creating a session,
  * the extension uses it to authenticate internal API calls, and the token is
  * revoked when the session ends.
  */

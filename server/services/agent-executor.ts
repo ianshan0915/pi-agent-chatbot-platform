@@ -1,7 +1,7 @@
 /**
  * AgentExecutor: shared logic for spawning pi --mode rpc processes.
  *
- * Used by TenantBridge (chat), SchedulerWorker (cron jobs), and TaskQueueService
+ * Used by SdkBridge (chat), SchedulerWorker (cron jobs), and TaskQueueService
  * (background tasks). Consolidates provider key resolution, OAuth credential
  * injection, skill resolution, file download, and process spawning.
  */
