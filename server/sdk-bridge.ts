@@ -486,12 +486,18 @@ export class SdkBridge {
 		this.sessionCreating = false;
 		console.log(`[sdk-bridge] Session created: ${this.sessionId} (model: ${session.model?.provider}/${session.model?.id})`);
 
-		// Push model state to client so it knows the real model after lazy creation
-		if (session.model) {
+		// Push model state to client so it knows the real model after lazy creation.
+		// Skip if pending messages include a set_model/cycle_model — those will set the
+		// final model and a premature state_update would clobber the client's optimistic
+		// model selection.
+		const hasPendingModelChange = this.pendingMessages.some(
+			({ parsed }) => parsed.type === "set_model" || parsed.type === "cycle_model",
+		);
+		if (session.model && !hasPendingModelChange) {
 			try {
 				this.ws.send(JSON.stringify({
 					type: "state_update",
-					model: { id: session.model.id, provider: session.model.provider },
+					model: { id: session.model.id, provider: session.model.provider, name: session.model.name, reasoning: (session.model as any).reasoning },
 				}));
 			} catch {}
 		}
@@ -670,7 +676,7 @@ export class SdkBridge {
 				const model = this.session.modelRegistry.find(parsed.provider, parsed.modelId);
 				if (model) {
 					this.session.setModel(model).then(() => {
-						this.sendResponse(id, { model: { id: model.id, provider: model.provider } });
+						this.sendResponse(id, { model: { id: model.id, provider: model.provider, name: model.name, reasoning: (model as any).reasoning } });
 					}).catch((err) => {
 						this.sendError(id, err.message);
 					});
@@ -684,7 +690,7 @@ export class SdkBridge {
 				this.session.cycleModel(parsed.direction).then((result) => {
 					if (result) {
 						this.sendResponse(id, {
-							model: { id: result.model.id, provider: result.model.provider },
+							model: { id: result.model.id, provider: result.model.provider, name: result.model.name, reasoning: (result.model as any).reasoning },
 							thinkingLevel: result.thinkingLevel,
 						});
 					} else {
@@ -700,6 +706,7 @@ export class SdkBridge {
 					id: m.id,
 					provider: m.provider,
 					name: m.name,
+					reasoning: (m as any).reasoning,
 				}));
 				this.sendResponse(id, models);
 				break;
@@ -859,24 +866,48 @@ export class SdkBridge {
 	private sendSyntheticGetState(requestId: string): void {
 		const optModel = this.options.model && this.options.model !== "loading..."
 			? this.options.model : null;
-		let model: { id: string; provider: string | null } | null = optModel
-			? { id: optModel, provider: this.options.provider || null }
-			: this.sessionModel
-				? { id: this.sessionModel.id, provider: this.sessionModel.provider }
-				: null;
+		let model: { id: string; provider: string | null; name?: string; reasoning?: boolean } | null = null;
 
-		// If no model known yet, resolve the default from available providers.
-		// On AWS, getAvailable() includes auto-detected Bedrock models (from IAM credentials).
-		// Prefer models from explicitly configured providers (team keys / user OAuth).
-		if (!model && this.authStorage) {
+		// Try to resolve full model info from registry (includes reasoning, name, etc.)
+		if (this.authStorage) {
 			const registry = new ModelRegistry(this.authStorage);
-			const available = registry.getAvailable();
-			if (available.length > 0) {
-				const configuredModel = available.find(
-					(m) => this.configuredProviders.has(m.provider),
-				);
-				const chosen = configuredModel ?? available[0];
-				model = { id: chosen.id, provider: chosen.provider };
+			if (optModel && this.options.provider) {
+				const found = registry.find(this.options.provider, optModel);
+				if (found) {
+					model = { id: found.id, provider: found.provider, name: found.name, reasoning: (found as any).reasoning };
+				}
+			}
+			if (!model && this.sessionModel?.id && this.sessionModel?.provider) {
+				const found = registry.find(this.sessionModel.provider, this.sessionModel.id);
+				if (found) {
+					model = { id: found.id, provider: found.provider, name: found.name, reasoning: (found as any).reasoning };
+				}
+			}
+			// Fallback: just id+provider without reasoning
+			if (!model && optModel) {
+				model = { id: optModel, provider: this.options.provider || null };
+			} else if (!model && this.sessionModel) {
+				model = { id: this.sessionModel.id, provider: this.sessionModel.provider };
+			}
+			// If no model known yet, resolve the default from available providers.
+			// On AWS, getAvailable() includes auto-detected Bedrock models (from IAM credentials).
+			// Prefer models from explicitly configured providers (team keys / user OAuth).
+			if (!model) {
+				const available = registry.getAvailable();
+				if (available.length > 0) {
+					const configuredModel = available.find(
+						(m) => this.configuredProviders.has(m.provider),
+					);
+					const chosen = configuredModel ?? available[0];
+					model = { id: chosen.id, provider: chosen.provider, name: chosen.name, reasoning: (chosen as any).reasoning };
+				}
+			}
+		} else {
+			// No authStorage yet — fall back to bare id+provider
+			if (optModel) {
+				model = { id: optModel, provider: this.options.provider || null };
+			} else if (this.sessionModel) {
+				model = { id: this.sessionModel.id, provider: this.sessionModel.provider };
 			}
 		}
 
@@ -901,7 +932,9 @@ export class SdkBridge {
 		}
 
 		const sessionModel = this.session.model;
-		const model = sessionModel ? { id: sessionModel.id, provider: sessionModel.provider } : null;
+		const model = sessionModel
+			? { id: sessionModel.id, provider: sessionModel.provider, name: sessionModel.name, reasoning: (sessionModel as any).reasoning }
+			: null;
 		this.sendResponse(requestId, {
 			model,
 			thinkingLevel: this.session.thinkingLevel,

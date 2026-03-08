@@ -300,6 +300,14 @@ async function main() {
 			});
 		}
 
+		// Buffer messages that arrive before the bridge's message handler is
+		// registered. The async DB queries below (session ownership, profile
+		// resolution) can take long enough for the client's first message
+		// (get_state) to arrive and be silently dropped.
+		const earlyMessages: Buffer[] = [];
+		const earlyHandler = (data: Buffer) => earlyMessages.push(data);
+		ws.on("message", earlyHandler);
+
 		// Parse bridge options from query params
 		const url = new URL(req.url || "/", `http://localhost:${PORT}`);
 		const options: BridgeOptions = {};
@@ -393,6 +401,13 @@ async function main() {
 		};
 		const bridge = new SdkBridge(ws, sdkOptions);
 		bridge.start();
+
+		// Stop buffering — the bridge's message handler is now registered.
+		// Replay any messages that arrived during the async setup above.
+		ws.off("message", earlyHandler);
+		for (const msg of earlyMessages) {
+			ws.emit("message", msg);
+		}
 	});
 
 	// WebSocket upgrade handler with JWT authentication
