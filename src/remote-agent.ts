@@ -91,14 +91,8 @@ export class RemoteAgent {
 	setModel(m: Model<any>): void {
 		// Update local state optimistically
 		this._state.model = m;
-		// Send as a tracked command — re-apply from server response to survive
-		// any intermediate state_update events that might clobber the optimistic value.
-		this.sendCommand({ type: "set_model", provider: m.provider, modelId: m.id }).then((response) => {
-			if (response?.data?.model) {
-				this._state.model = response.data.model;
-				this.emit({ type: "state-update", state: this._state } as any);
-			}
-		}).catch((err) => {
+		// Send as a tracked command so the response doesn't trigger showError
+		this.sendCommand({ type: "set_model", provider: m.provider, modelId: m.id }).catch((err) => {
 			console.warn(`[RemoteAgent] set_model rejected: ${err.message}`);
 		});
 	}

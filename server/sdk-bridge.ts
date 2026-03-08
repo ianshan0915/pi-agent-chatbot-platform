@@ -483,26 +483,20 @@ export class SdkBridge {
 		this.sessionCreating = false;
 		console.log(`[sdk-bridge] Session created: ${this.sessionId} (model: ${session.model?.provider}/${session.model?.id})`);
 
-		// Push model state to client — but only if no pending set_model command.
-		// If the user changed model before session creation, a set_model is queued
-		// in pendingMessages. Sending state_update now would clobber the client's
-		// optimistic model update, and the pending set_model response never re-applies
-		// it (the client's setModel() only reads errors, not success responses).
-		const hasPendingSetModel = this.pendingMessages.some(
-			(m) => m.parsed?.type === "set_model",
-		);
-		if (!hasPendingSetModel) {
-			const modelForClient = this.clientModel
-				?? (session.model ? { id: session.model.id, provider: session.model.provider } : null);
-			if (modelForClient) {
-				if (!this.clientModel) this.clientModel = modelForClient;
-				try {
-					this.ws.send(JSON.stringify({
-						type: "state_update",
-						model: modelForClient,
-					}));
-				} catch {}
-			}
+		// Push model state to client. Use clientModel (the user's explicit choice) if
+		// available, falling back to the SDK's resolved model only when the user had no
+		// preference (e.g., brand-new session with no model selection).
+		const modelForClient = this.clientModel
+			?? (session.model ? { id: session.model.id, provider: session.model.provider } : null);
+		if (modelForClient) {
+			// Update clientModel if it wasn't set (no user preference — accept SDK default)
+			if (!this.clientModel) this.clientModel = modelForClient;
+			try {
+				this.ws.send(JSON.stringify({
+					type: "state_update",
+					model: modelForClient,
+				}));
+			} catch {}
 		}
 	}
 
