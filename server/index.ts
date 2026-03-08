@@ -216,12 +216,20 @@ async function main() {
 		if (!RENDERABLE_EXTENSIONS.has(ext)) {
 			return res.status(400).json({ error: "Unsupported file type" });
 		}
-		// 1.8 Path traversal fix: resolve symlinks and use path.sep to prevent prefix attacks
+		// 1.8 Path traversal fix: resolve symlinks and use path.sep to prevent prefix attacks.
+		// Allow temp directory files — agents commonly generate outputs there (python-pptx, etc.).
 		if (cwd) {
 			try {
 				const realFile = await fs.realpath(filePath);
 				const realCwd = await fs.realpath(cwd);
-				if (!realFile.startsWith(realCwd + path.sep) && realFile !== realCwd) {
+				const inTempDir =
+					realFile.startsWith("/tmp/") ||
+					realFile.startsWith("/private/tmp/"); // macOS: /tmp → /private/tmp
+				if (
+					!inTempDir &&
+					!realFile.startsWith(realCwd + path.sep) &&
+					realFile !== realCwd
+				) {
 					return res.status(403).json({ error: "Path is outside working directory" });
 				}
 				filePath = realFile;

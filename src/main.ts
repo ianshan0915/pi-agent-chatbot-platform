@@ -597,7 +597,9 @@ function onAgentEvent(event: AgentEvent): void {
 		const cached = pendingToolArgs.get(event.toolCallId);
 		pendingToolArgs.delete(event.toolCallId);
 		if (cached?.args) {
-			const filePath = getRenderablePathFromArgs(cached.args);
+			// push_to_viewer is an explicit agent action — bypass temp directory filter
+			const isPushToViewer = cached.toolName === "push_to_viewer";
+			const filePath = getRenderablePathFromArgs(cached.args, { skipTempFilter: isPushToViewer });
 			const content = getContentFromArgs(cached.args);
 			const ext = filePath?.split(".").pop()?.toLowerCase();
 			// PPTX files need server-side conversion (LibreOffice → PNG slides),
@@ -754,7 +756,7 @@ function disconnectWebSocket(): void {
 			const userMsg = remoteAgent.state.messages.find(
 				(m: any) => m.role === "user" || m.role === "user-with-attachments",
 			);
-			if (userMsg) {
+			if (userMsg && "content" in userMsg) {
 				const text = typeof userMsg.content === "string"
 					? userMsg.content
 					: Array.isArray(userMsg.content)
@@ -916,14 +918,26 @@ function closeSessionStatusSSE(): void {
 
 /** Extract renderable file path from tool args (supports various arg shapes).
  *  Only returns paths for "final output" file types (documents, images, rich visuals).
- *  Filters out temp/skill files to keep the artifacts panel clean. */
-function getRenderablePathFromArgs(args: any): string | null {
+ *  Filters out skill/system-prompt files to keep the artifacts panel clean.
+ *  Temp directory (/tmp/) files are allowed — agents commonly generate outputs there. */
+function getRenderablePathFromArgs(
+	args: any,
+	opts?: { skipTempFilter?: boolean },
+): string | null {
 	if (!args || typeof args !== "object") return null;
 	const filePath = args.path || args.filePath || args.file_path || args.filename || "";
 	if (typeof filePath !== "string" || filePath.length === 0) return null;
-	// Skip files in temp directories (skill files, system prompt files, etc.)
-	if (filePath.startsWith("/tmp/") || filePath.includes("/pi-skills-") || filePath.includes("/pi-sysprompt-")) {
+	// Always skip platform-internal files (skill downloads, system prompt staging)
+	if (filePath.includes("/pi-skills-") || filePath.includes("/pi-sysprompt-")) {
 		return null;
+	}
+	// Skip temp directory files unless explicitly pushed (push_to_viewer) or binary output.
+	// Binary document/image types in /tmp/ are almost always agent-generated final outputs.
+	if (!opts?.skipTempFilter && filePath.startsWith("/tmp/")) {
+		const ext = filePath.split(".").pop()?.toLowerCase();
+		if (!ext || !BINARY_EXTENSIONS.has(ext)) {
+			return null;
+		}
 	}
 	const ext = filePath.split(".").pop()?.toLowerCase();
 	if (ext && ARTIFACT_AUTO_DETECT_EXTENSIONS.has(ext)) {
@@ -954,7 +968,10 @@ async function fetchAndCreateFileArtifact(filePath: string) {
 		const res = await fetch(`/api/agent-files?path=${encodeURIComponent(filePath)}`, {
 			headers: { Authorization: `Bearer ${authClient.token}` },
 		});
-		if (!res.ok) return;
+		if (!res.ok) {
+			console.warn(`[artifacts] Server returned ${res.status} for ${filePath}`);
+			return;
+		}
 		const data = await res.json();
 		// PPTX: server returns pre-rendered slide images + raw binary for download
 		if (data.encoding === "slides" && data.slides) {
@@ -981,7 +998,10 @@ async function reconstructFileArtifactsFromMessages(
 		for (const block of msg.content) {
 			if ((block as any).type !== "toolCall") continue;
 			const args = (block as any).arguments;
-			const filePath = getRenderablePathFromArgs(args);
+			const toolName = (block as any).name || (block as any).toolName || "";
+			const filePath = getRenderablePathFromArgs(args, {
+				skipTempFilter: toolName === "push_to_viewer",
+			});
 			const content = getContentFromArgs(args);
 			const ext = filePath?.split(".").pop()?.toLowerCase();
 			if (filePath && (ext === "pptx" || ext === "ppt")) {
@@ -1028,7 +1048,7 @@ function trackDirFromPath(filePath: string) {
  */
 function scanMessageForFileReferences(msg: AgentMessage) {
 	const panel = chatPanel?.artifactsPanel;
-	if (!panel || !msg.content || typeof msg.content === "string") return;
+	if (!panel || !("content" in msg) || !msg.content || typeof msg.content === "string") return;
 
 	for (const block of msg.content) {
 		if ((block as any).type !== "text") continue;

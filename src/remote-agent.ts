@@ -579,6 +579,7 @@ export class RemoteAgent {
 	}
 
 	private extractText(m: AgentMessage): string {
+		if (!("content" in m)) return "";
 		if (typeof m.content === "string") return m.content;
 		if (Array.isArray(m.content)) {
 			return m.content
