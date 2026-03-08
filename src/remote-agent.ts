@@ -91,10 +91,19 @@ export class RemoteAgent {
 	setModel(m: Model<any>): void {
 		// Update local state optimistically
 		this._state.model = m;
-		// Send as a tracked command so the response doesn't trigger showError
-		this.sendCommand({ type: "set_model", provider: m.provider, modelId: m.id }).catch((err) => {
-			console.warn(`[RemoteAgent] set_model rejected: ${err.message}`);
-		});
+		// Send as a tracked command. On response, re-apply the server-confirmed model
+		// to recover from any state_update that may have clobbered the optimistic value
+		// during lazy session creation.
+		this.sendCommand({ type: "set_model", provider: m.provider, modelId: m.id })
+			.then((response) => {
+				if (response?.data?.model) {
+					this._state.model = response.data.model;
+					this.emit({ type: "state-update", state: this._state } as any);
+				}
+			})
+			.catch((err) => {
+				console.warn(`[RemoteAgent] set_model rejected: ${err.message}`);
+			});
 	}
 
 	setThinkingLevel(l: ThinkingLevel): void {

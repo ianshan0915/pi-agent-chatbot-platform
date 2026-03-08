@@ -257,6 +257,8 @@ const saveSession = async (force = false) => {
 			id: currentSessionId,
 			title: currentTitle,
 			model: state.model!,
+			modelId: state.model?.id || null,
+			provider: state.model?.provider || null,
 			thinkingLevel: state.thinkingLevel,
 			messages: state.messages,
 			agentProfileId: currentAgentProfileId || null,
@@ -1806,6 +1808,7 @@ async function initApp() {
 		// Validate stored token
 		const valid = await authClient.validate();
 		if (valid) {
+			restoreSessionState();
 			storage = initStorage();
 			chatPanel = new ChatPanel();
 			connectWebSocket();
