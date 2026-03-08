@@ -134,6 +134,38 @@ let currentAgentProfileId: string | undefined;
 let currentModelId: string | undefined;
 let currentProvider: string | undefined;
 
+// Persist critical state in sessionStorage so it survives page reload.
+// Without this, the server falls back to ModelRegistry.getAvailable()[0]
+// which on AWS returns a Bedrock model instead of the user's chosen model.
+const SESSION_STATE_KEY = "chatbot_session_state";
+
+function saveSessionState(): void {
+	try {
+		sessionStorage.setItem(SESSION_STATE_KEY, JSON.stringify({
+			sessionId: currentSessionId,
+			modelId: currentModelId,
+			provider: currentProvider,
+			agentProfileId: currentAgentProfileId,
+		}));
+	} catch {}
+}
+
+function restoreSessionState(): void {
+	try {
+		const raw = sessionStorage.getItem(SESSION_STATE_KEY);
+		if (!raw) return;
+		const state = JSON.parse(raw);
+		currentSessionId = state.sessionId ?? undefined;
+		currentModelId = state.modelId ?? undefined;
+		currentProvider = state.provider ?? undefined;
+		currentAgentProfileId = state.agentProfileId ?? undefined;
+	} catch {}
+}
+
+function clearSessionState(): void {
+	try { sessionStorage.removeItem(SESSION_STATE_KEY); } catch {}
+}
+
 // Projects (session folders) state
 interface ProjectInfo { id: string; name: string; icon: string | null; sort_order: number; }
 let projects: ProjectInfo[] = [];
@@ -299,6 +331,7 @@ const loadSession = async (sessionId: string): Promise<boolean> => {
 	currentProvider = undefined;
 	chatPanel?.artifactsPanel?.clear();
 	fetchedFileRefs.clear();
+	saveSessionState();
 
 	// Reconnect — the URL will include the sessionId + agentProfileId
 	connectWebSocket();
@@ -326,6 +359,7 @@ const deleteSession = async (sessionId: string) => {
 			currentTitle = "";
 			chatPanel?.artifactsPanel?.clear();
 			fetchedFileRefs.clear();
+			saveSessionState();
 			if (remoteAgent) {
 				remoteAgent.newSession();
 			}
@@ -562,6 +596,7 @@ function trackCurrentModel(): void {
 	if (model?.id && model.id !== "loading...") {
 		currentModelId = model.id;
 		currentProvider = model.provider;
+		saveSessionState();
 	}
 }
 
@@ -579,6 +614,7 @@ function onAgentEvent(event: AgentEvent): void {
 	// Create session ID on first saveable state
 	if (!currentSessionId && shouldSaveSession(messages)) {
 		currentSessionId = crypto.randomUUID();
+		saveSessionState();
 	}
 
 	// Debounced auto-save
@@ -736,6 +772,7 @@ function connectWebSocket(): void {
 	// share the same ID — required for background session reattachment.
 	if (!currentSessionId) {
 		currentSessionId = crypto.randomUUID();
+		saveSessionState();
 	}
 
 	ws = new WebSocket(getWsUrl());
@@ -844,6 +881,7 @@ function selectAgentProfile(profileId: string | undefined): void {
 	currentProvider = undefined;
 	chatPanel?.artifactsPanel?.clear();
 	fetchedFileRefs.clear();
+	saveSessionState();
 
 	connectWebSocket();
 	renderApp();
@@ -1306,6 +1344,7 @@ const renderApp = () => {
 								currentTitle = "";
 								chatPanel?.artifactsPanel?.clear();
 								fetchedFileRefs.clear();
+								saveSessionState();
 								connectWebSocket();
 								renderApp();
 							}}
@@ -1715,6 +1754,8 @@ const renderApp = () => {
 // ============================================================================
 
 function onAuthSuccess() {
+	// Restore session state from before page reload (model, session ID, etc.)
+	restoreSessionState();
 	// Initialize storage and connect after successful login
 	storage = initStorage();
 	chatPanel = new ChatPanel();
@@ -1735,11 +1776,14 @@ function handleLogout() {
 	currentSessionId = undefined;
 	currentTitle = "";
 	currentAgentProfileId = undefined;
+	currentModelId = undefined;
+	currentProvider = undefined;
 	agentProfiles = [];
 	projects = [];
 	collapsedProjects.clear();
 	editingProjectId = null;
 	moveMenuSessionId = null;
+	clearSessionState();
 	authClient.logout();
 	renderApp();
 }
