@@ -7,34 +7,41 @@
 
 export const MODEL_LABELS: Record<string, string> = {
 	// Anthropic
-	"claude-opus-4-20250514": "Claude Opus 4",
-	"claude-sonnet-4-20250514": "Claude Sonnet 4",
-	"claude-sonnet-4-5-20250514": "Claude Sonnet 4.5",
-	"claude-sonnet-4-6": "Claude Sonnet 4.6",
 	"claude-opus-4-6": "Claude Opus 4.6",
-	"claude-3-5-sonnet-20241022": "Claude 3.5 Sonnet",
-	"claude-3-5-haiku-20241022": "Claude 3.5 Haiku",
-	"claude-3-opus-20240229": "Claude 3 Opus",
-	"claude-3-haiku-20240307": "Claude 3 Haiku",
-	// OpenAI
-	"gpt-4o": "GPT-4o",
-	"gpt-4o-mini": "GPT-4o Mini",
-	"gpt-4-turbo": "GPT-4 Turbo",
-	"gpt-4": "GPT-4",
-	"o1-preview": "o1 Preview",
-	"o1-mini": "o1 Mini",
-	"o3-mini": "o3 Mini",
+	"claude-opus-4-5": "Claude Opus 4.5",
+	"claude-sonnet-4-6": "Claude Sonnet 4.6",
+	"claude-sonnet-4-5": "Claude Sonnet 4.5",
+	"claude-haiku-4-5": "Claude Haiku 4.5",
 	// Google
-	"gemini-2.0-flash": "Gemini 2.0 Flash",
-	"gemini-2.0-pro": "Gemini 2.0 Pro",
-	"gemini-1.5-pro": "Gemini 1.5 Pro",
-	"gemini-1.5-flash": "Gemini 1.5 Flash",
-	// Groq
-	"llama-3.3-70b-versatile": "Llama 3.3 70B",
-	"llama-3.1-8b-instant": "Llama 3.1 8B",
+	"gemini-2.5-flash": "Gemini 2.5 Flash",
+	"gemini-2.5-flash-lite": "Gemini 2.5 Flash Lite",
+	"gemini-2.5-pro": "Gemini 2.5 Pro",
+	"gemini-3-flash-preview": "Gemini 3 Flash",
+	"gemini-3-pro-preview": "Gemini 3 Pro",
+	"gemini-3.1-flash-lite-preview": "Gemini 3.1 Flash Lite",
+	"gemini-3.1-pro-preview": "Gemini 3.1 Pro",
 	// xAI
-	"grok-2": "Grok 2",
-	"grok-beta": "Grok Beta",
+	"grok-4": "Grok 4",
+	"grok-4-fast": "Grok 4 Fast",
+	"grok-4-fast-non-reasoning": "Grok 4 Fast (NR)",
+	"grok-4-1-fast": "Grok 4.1 Fast",
+	"grok-4-1-fast-non-reasoning": "Grok 4.1 Fast (NR)",
+	"grok-code-fast-1": "Grok Code Fast",
+	// ZAI
+	"glm-4.5": "GLM 4.5",
+	"glm-4.5-air": "GLM 4.5 Air",
+	"glm-4.5-flash": "GLM 4.5 Flash",
+	"glm-4.5v": "GLM 4.5V",
+	"glm-4.6": "GLM 4.6",
+	"glm-4.6v": "GLM 4.6V",
+	"glm-4.7": "GLM 4.7",
+	"glm-4.7-flash": "GLM 4.7 Flash",
+	"glm-5": "GLM 5",
+	// MiniMax
+	"MiniMax-M2": "MiniMax M2",
+	"MiniMax-M2.1": "MiniMax M2.1",
+	"MiniMax-M2.5": "MiniMax M2.5",
+	"MiniMax-M2.5-highspeed": "MiniMax M2.5 HS",
 };
 
 /** Get a human-friendly label for a model ID, or the raw ID if unknown. */

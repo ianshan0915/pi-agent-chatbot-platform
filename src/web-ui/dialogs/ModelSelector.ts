@@ -160,22 +160,38 @@ export class ModelSelector extends DialogBase {
 	 * Providers visible in the model selector.
 	 * Only these cloud providers are shown; custom providers (Ollama, etc.) are always included.
 	 */
-	private static ALLOWED_PROVIDERS = new Set(["anthropic", "azure-openai-responses", "amazon-bedrock"]);
+	private static ALLOWED_PROVIDERS = new Set(["anthropic", "google", "zai", "minimax", "xai"]);
 
 	/**
-	 * For providers with many models, only show models matching these prefixes.
-	 * If a provider is not in this map, all its models are shown.
+	 * Curated model allowlists per provider — filters out outdated/alias models.
+	 * If a provider is not in this map, all its models are shown (e.g. zai, minimax).
 	 */
-	private static PROVIDER_MODEL_FILTERS: Record<string, (id: string) => boolean> = {
-		"amazon-bedrock": (id) => id.startsWith("anthropic.claude"),
+	private static PROVIDER_MODEL_ALLOWLIST: Record<string, Set<string>> = {
+		anthropic: new Set([
+			"claude-opus-4-6",
+			"claude-opus-4-5",
+			"claude-sonnet-4-6",
+			"claude-sonnet-4-5",
+			"claude-haiku-4-5",
+		]),
+		google: new Set([
+			"gemini-2.5-flash",
+			"gemini-2.5-flash-lite",
+			"gemini-2.5-pro",
+			"gemini-3-flash-preview",
+			"gemini-3-pro-preview",
+			"gemini-3.1-flash-lite-preview",
+			"gemini-3.1-pro-preview",
+		]),
+		xai: new Set([
+			"grok-4",
+			"grok-4-fast",
+			"grok-4-fast-non-reasoning",
+			"grok-4-1-fast",
+			"grok-4-1-fast-non-reasoning",
+			"grok-code-fast-1",
+		]),
 	};
-
-	/**
-	 * Bedrock cross-region inference profile prefix.
-	 * EU/AP regions require model IDs prefixed with "eu." or "ap.".
-	 * Set to empty string for US regions (bare model IDs work).
-	 */
-	private static BEDROCK_REGION_PREFIX = "eu.";
 
 	private getFilteredModels(): Array<{ provider: string; id: string; model: any }> {
 		// Collect models from allowed known providers only
@@ -184,17 +200,11 @@ export class ModelSelector extends DialogBase {
 
 		for (const provider of knownProviders) {
 			if (!ModelSelector.ALLOWED_PROVIDERS.has(provider)) continue;
-			const modelFilter = ModelSelector.PROVIDER_MODEL_FILTERS[provider];
+			const allowlist = ModelSelector.PROVIDER_MODEL_ALLOWLIST[provider];
 			const models = getModels(provider as any);
 			for (const model of models) {
-				if (modelFilter && !modelFilter(model.id)) continue;
-				// Bedrock non-US regions need cross-region inference profile IDs
-				if (provider === "amazon-bedrock" && ModelSelector.BEDROCK_REGION_PREFIX) {
-					const prefixedId = ModelSelector.BEDROCK_REGION_PREFIX + model.id;
-					allModels.push({ provider, id: prefixedId, model: { ...model, id: prefixedId } });
-				} else {
-					allModels.push({ provider, id: model.id, model });
-				}
+				if (allowlist && !allowlist.has(model.id)) continue;
+				allModels.push({ provider, id: model.id, model });
 			}
 		}
 
