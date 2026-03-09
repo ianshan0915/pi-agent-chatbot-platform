@@ -60,6 +60,38 @@ import { createAgentMemoryExtension } from "./extensions/agent-memory-factory.js
 import braveSearchExtension from "./extensions/brave-search.js";
 import pushToViewerExtension from "./extensions/push-to-viewer.js";
 
+/**
+ * Preferred default models in priority order.
+ * When no explicit model is chosen, pick the first match from available models.
+ */
+const PREFERRED_DEFAULT_MODELS = [
+	{ provider: "anthropic", id: "claude-sonnet-4-5" },
+	{ provider: "anthropic", id: "claude-sonnet-4-6" },
+	{ provider: "anthropic", id: "claude-haiku-4-5" },
+	{ provider: "google", id: "gemini-2.5-flash" },
+	{ provider: "xai", id: "grok-4-fast" },
+	{ provider: "zai", id: "glm-4.7" },
+	{ provider: "minimax", id: "MiniMax-M2.5" },
+];
+
+/**
+ * Pick the best default model from a list of available models.
+ * Tries PREFERRED_DEFAULT_MODELS first (only from configured providers),
+ * then falls back to the first model from any configured provider, then available[0].
+ */
+function pickDefaultModel<T extends { provider: string; id: string }>(
+	available: T[],
+	configuredProviders: Set<string>,
+): T | undefined {
+	for (const pref of PREFERRED_DEFAULT_MODELS) {
+		const match = available.find(
+			(m) => m.provider === pref.provider && m.id === pref.id && configuredProviders.has(m.provider),
+		);
+		if (match) return match;
+	}
+	return available.find((m) => configuredProviders.has(m.provider)) ?? available[0];
+}
+
 export interface SdkBridgeOptions extends BridgeOptions {
 	user: AuthUser;
 	sessionId?: string;
@@ -429,16 +461,10 @@ export class SdkBridge {
 			}
 		}
 
-		// If no model resolved, prefer a model from explicitly configured providers
-		// over auto-detected ones (e.g., AWS IAM → Bedrock)
+		// If no model resolved, pick best default from preferred list, then configured providers
 		if (!model) {
 			const available = modelRegistry.getAvailable();
-			if (available.length > 0) {
-				const configuredModel = available.find(
-					(m) => this.configuredProviders.has(m.provider),
-				);
-				model = configuredModel ?? available[0];
-			}
+			model = pickDefaultModel(available, this.configuredProviders);
 		}
 
 		const { session, extensionsResult } = await createAgentSession({
@@ -883,22 +909,16 @@ export class SdkBridge {
 					model = { id: found.id, provider: found.provider, name: found.name, reasoning: (found as any).reasoning };
 				}
 			}
-			// Fallback: just id+provider without reasoning
+			// Fallback: use explicit model from URL params (but not stale sessionModel —
+			// if it didn't resolve in the registry, let it fall through to preferred defaults)
 			if (!model && optModel) {
 				model = { id: optModel, provider: this.options.provider || null };
-			} else if (!model && this.sessionModel) {
-				model = { id: this.sessionModel.id, provider: this.sessionModel.provider };
 			}
 			// If no model known yet, resolve the default from available providers.
-			// On AWS, getAvailable() includes auto-detected Bedrock models (from IAM credentials).
-			// Prefer models from explicitly configured providers (team keys / user OAuth).
 			if (!model) {
 				const available = registry.getAvailable();
-				if (available.length > 0) {
-					const configuredModel = available.find(
-						(m) => this.configuredProviders.has(m.provider),
-					);
-					const chosen = configuredModel ?? available[0];
+				const chosen = pickDefaultModel(available, this.configuredProviders);
+				if (chosen) {
 					model = { id: chosen.id, provider: chosen.provider, name: chosen.name, reasoning: (chosen as any).reasoning };
 				}
 			}

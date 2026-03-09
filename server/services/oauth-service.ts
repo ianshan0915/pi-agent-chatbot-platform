@@ -7,7 +7,7 @@
 
 import type { Pool } from "pg";
 import type { CryptoService } from "./crypto.js";
-import { getOAuthApiKey } from "@mariozechner/pi-ai";
+import { getOAuthApiKey } from "@mariozechner/pi-ai/oauth";
 
 export interface OAuthCredentials {
 	refresh: string;

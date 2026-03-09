@@ -35,3 +35,5 @@ coverage/
 /agent-skills-slides.md
 /layman_talk_slides.md
 .pi/
+.entire/
+.claude/
