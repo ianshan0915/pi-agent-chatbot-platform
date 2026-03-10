@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.5.0",
+  "checkpoint_id": "ab660bb815d3",
+  "strategy": "manual-commit",
+  "branch": "dev/cloud-deployment",
+  "checkpoints_count": 0,
+  "files_touched": [
+    ".env.development.example",
+    "server/routes/oauth.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/ab/660bb815d3/0/metadata.json",
+      "transcript": "/ab/660bb815d3/0/full.jsonl",
+      "content_hash": "/ab/660bb815d3/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 7,
+    "cache_creation_tokens": 3391,
+    "cache_read_tokens": 428462,
+    "output_tokens": 1435,
+    "api_call_count": 7
+  }
+}
