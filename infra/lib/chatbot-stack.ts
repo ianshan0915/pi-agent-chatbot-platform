@@ -93,6 +93,12 @@ export class ChatbotPlatformStack extends cdk.Stack {
 			this, "BraveSearchKey", "chatbot-platform/brave-search-key",
 		);
 
+		// Google OAuth credentials (Antigravity / Gemini Code Assist) — pre-created secret
+		// with keys: client_id, client_secret
+		const googleOAuthSecret = secretsmanager.Secret.fromSecretNameV2(
+			this, "GoogleOAuthSecret", "chatbot-platform/google-oauth",
+		);
+
 		// ----------------------------------------------------------------
 		// RDS PostgreSQL — free tier eligible
 		// ----------------------------------------------------------------
@@ -221,6 +227,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		appSecrets.grantRead(taskDefinition.taskRole);
 		encryptionKeySecret.grantRead(taskDefinition.taskRole);
 		braveSearchKey.grantRead(taskDefinition.taskRole);
+		googleOAuthSecret.grantRead(taskDefinition.taskRole);
 
 		// Build DATABASE_URL from RDS secret
 		const dbSecret = database.secret!;
@@ -231,7 +238,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 			removalPolicy: cdk.RemovalPolicy.RETAIN, // Keep logs for debugging failed deploys
 		});
 
-		const container = taskDefinition.addContainer("app", {
+		taskDefinition.addContainer("app", {
 			// Initial deployment uses a placeholder; after first `docker push` to ECR,
 			// update to: ecs.ContainerImage.fromEcrRepository(repository, "latest")
 			image: ecs.ContainerImage.fromEcrRepository(repository, "latest"),
@@ -271,6 +278,9 @@ export class ChatbotPlatformStack extends cdk.Stack {
 				SMTP_PASSWORD: ecs.Secret.fromSecretsManager(smtpSecrets, "password"),
 				// Brave Search
 				BRAVE_SEARCH_API_KEY: ecs.Secret.fromSecretsManager(braveSearchKey),
+				// Google OAuth (Antigravity / Gemini Code Assist)
+				OAUTH_GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(googleOAuthSecret, "client_id"),
+				OAUTH_GOOGLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(googleOAuthSecret, "client_secret"),
 			},
 			portMappings: [{ containerPort: 3001, protocol: ecs.Protocol.TCP }],
 			healthCheck: {

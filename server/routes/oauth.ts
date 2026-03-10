@@ -13,7 +13,26 @@ import { getDatabase } from "../db/index.js";
 import { generatePKCE } from "../utils/pkce.js";
 
 // OAuth provider configurations
-const OAUTH_PROVIDERS = {
+// OpenAI redirect URI: must match a URI registered with the OAuth client.
+// The public CLI client only allows http://localhost:1455/auth/callback.
+// For cloud deployment with a custom OAuth client, override via OAUTH_OPENAI_REDIRECT_URI.
+const OPENAI_REDIRECT_URI =
+	process.env.OAUTH_OPENAI_REDIRECT_URI || "http://localhost:1455/auth/callback";
+
+const ANTIGRAVITY_REDIRECT_URI =
+	process.env.OAUTH_ANTIGRAVITY_REDIRECT_URI || "http://localhost:51121/oauth-callback";
+
+const OAUTH_PROVIDERS: Record<
+	string,
+	{
+		clientId: string;
+		clientSecret?: string;
+		authorizeUrl: string;
+		tokenUrl: string;
+		redirectUri: string;
+		scopes: string;
+	}
+> = {
 	anthropic: {
 		clientId: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
 		authorizeUrl: "https://claude.ai/oauth/authorize",
@@ -22,13 +41,75 @@ const OAUTH_PROVIDERS = {
 		scopes: "org:create_api_key user:profile user:inference",
 	},
 	"openai-codex": {
-		clientId: "chatgpt-oauth-cli",
+		clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
 		authorizeUrl: "https://auth.openai.com/oauth/authorize",
 		tokenUrl: "https://auth.openai.com/oauth/token",
-		redirectUri: "http://localhost:1455/auth/callback",
-		scopes: "openai profile email offline_access",
+		redirectUri: OPENAI_REDIRECT_URI,
+		scopes: "openid profile email offline_access",
+	},
+	"google-antigravity": {
+		// Requires OAUTH_GOOGLE_CLIENT_ID and OAUTH_GOOGLE_CLIENT_SECRET env vars.
+		// Use the well-known public Cloud Shell / Gemini Code Assist OAuth client
+		// credentials (see .env.development.example).
+		clientId: process.env.OAUTH_GOOGLE_CLIENT_ID || "",
+		clientSecret: process.env.OAUTH_GOOGLE_CLIENT_SECRET || "",
+		authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+		tokenUrl: "https://oauth2.googleapis.com/token",
+		redirectUri: ANTIGRAVITY_REDIRECT_URI,
+		scopes: [
+			"https://www.googleapis.com/auth/cloud-platform",
+			"https://www.googleapis.com/auth/userinfo.email",
+			"https://www.googleapis.com/auth/userinfo.profile",
+			"https://www.googleapis.com/auth/cclog",
+			"https://www.googleapis.com/auth/experimentsandconfigs",
+		].join(" "),
 	},
 };
+
+/** Discover the Antigravity project ID for the authenticated user. */
+async function discoverAntigravityProject(accessToken: string): Promise<string> {
+	const DEFAULT_PROJECT_ID = "rising-fact-p41fc";
+	const headers = {
+		Authorization: `Bearer ${accessToken}`,
+		"Content-Type": "application/json",
+		"User-Agent": "google-api-nodejs-client/9.15.1",
+		"X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
+		"Client-Metadata": JSON.stringify({
+			ideType: "IDE_UNSPECIFIED",
+			platform: "PLATFORM_UNSPECIFIED",
+			pluginType: "GEMINI",
+		}),
+	};
+	const body = JSON.stringify({
+		metadata: { ideType: "IDE_UNSPECIFIED", platform: "PLATFORM_UNSPECIFIED", pluginType: "GEMINI" },
+	});
+
+	for (const endpoint of [
+		"https://cloudcode-pa.googleapis.com",
+		"https://daily-cloudcode-pa.sandbox.googleapis.com",
+	]) {
+		try {
+			const res = await fetch(`${endpoint}/v1internal:loadCodeAssist`, { method: "POST", headers, body });
+			if (!res.ok) continue;
+			const data = (await res.json()) as {
+				cloudaicompanionProject?: string | { id?: string };
+			};
+			if (typeof data.cloudaicompanionProject === "string" && data.cloudaicompanionProject) {
+				return data.cloudaicompanionProject;
+			}
+			if (
+				data.cloudaicompanionProject &&
+				typeof data.cloudaicompanionProject === "object" &&
+				data.cloudaicompanionProject.id
+			) {
+				return data.cloudaicompanionProject.id;
+			}
+		} catch {
+			// try next endpoint
+		}
+	}
+	return DEFAULT_PROJECT_ID;
+}
 
 // Temporary storage for PKCE verifiers (in production, use Redis)
 const pkceStorage = new Map<string, { verifier: string; userId: string; expiresAt: number }>();
@@ -82,7 +163,6 @@ export function createOAuthRouter(crypto: CryptoService): Router {
 
 			// Build authorization URL
 			const authParams = new URLSearchParams({
-				code: "true",
 				client_id: config.clientId,
 				response_type: "code",
 				redirect_uri: config.redirectUri,
@@ -97,6 +177,9 @@ export function createOAuthRouter(crypto: CryptoService): Router {
 				authParams.set("codex_cli_simplified_flow", "true");
 				authParams.set("id_token_add_organizations", "true");
 				authParams.set("originator", "pi");
+			} else if (provider === "google-antigravity") {
+				authParams.set("access_type", "offline");
+				authParams.set("prompt", "consent");
 			}
 
 			const authUrl = `${config.authorizeUrl}?${authParams.toString()}`;
@@ -156,19 +239,23 @@ export function createOAuthRouter(crypto: CryptoService): Router {
 			const config = OAUTH_PROVIDERS[provider as keyof typeof OAUTH_PROVIDERS];
 
 			// Exchange code for tokens
+			const tokenParams: Record<string, string> = {
+				grant_type: "authorization_code",
+				client_id: config.clientId,
+				code: code,
+				redirect_uri: config.redirectUri,
+				code_verifier: pkceData.verifier,
+			};
+			if (config.clientSecret) {
+				tokenParams.client_secret = config.clientSecret;
+			}
+
 			const tokenResponse = await fetch(config.tokenUrl, {
 				method: "POST",
 				headers: {
-					"Content-Type": "application/json",
+					"Content-Type": "application/x-www-form-urlencoded",
 				},
-				body: JSON.stringify({
-					grant_type: "authorization_code",
-					client_id: config.clientId,
-					code: code,
-					state: state,
-					redirect_uri: config.redirectUri,
-					code_verifier: pkceData.verifier,
-				}),
+				body: new URLSearchParams(tokenParams),
 			});
 
 			if (!tokenResponse.ok) {
@@ -187,16 +274,21 @@ export function createOAuthRouter(crypto: CryptoService): Router {
 			// Calculate expiry time (current time + expires_in seconds - 5 min buffer)
 			const expiresAt = Date.now() + tokenData.expires_in * 1000 - 5 * 60 * 1000;
 
+			// Build credentials object (with provider-specific extra fields)
+			const credentials: Record<string, unknown> = {
+				refresh: tokenData.refresh_token,
+				access: tokenData.access_token,
+				expires: expiresAt,
+			};
+
+			// Antigravity requires project discovery after token exchange
+			if (provider === "google-antigravity") {
+				credentials.projectId = await discoverAntigravityProject(tokenData.access_token);
+				console.log(`[oauth] Antigravity project: ${credentials.projectId}`);
+			}
+
 			// Store credentials
-			await oauthService.storeCredentials(
-				provider as any,
-				{
-					refresh: tokenData.refresh_token,
-					access: tokenData.access_token,
-					expires: expiresAt,
-				},
-				{ userId },
-			);
+			await oauthService.storeCredentials(provider as any, credentials as any, { userId });
 
 			res.json({
 				success: true,

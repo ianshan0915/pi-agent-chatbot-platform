@@ -160,11 +160,19 @@ export class ModelSelector extends DialogBase {
 	 * Providers visible in the model selector.
 	 * Only these cloud providers are shown; custom providers (Ollama, etc.) are always included.
 	 */
-	private static ALLOWED_PROVIDERS = new Set(["anthropic", "google", "zai", "minimax", "xai"]);
+	private static ALLOWED_PROVIDERS = new Set([
+		"anthropic",
+		"openai",
+		"google",
+		"xai",
+		"minimax",
+		"zai",
+		"kimi-coding",
+	]);
 
 	/**
-	 * Curated model allowlists per provider — filters out outdated/alias models.
-	 * If a provider is not in this map, all its models are shown (e.g. zai, minimax).
+	 * Curated model allowlists per provider — only the most recent models.
+	 * If a provider is not in this map, all its models are shown.
 	 */
 	private static PROVIDER_MODEL_ALLOWLIST: Record<string, Set<string>> = {
 		anthropic: new Set([
@@ -173,6 +181,15 @@ export class ModelSelector extends DialogBase {
 			"claude-sonnet-4-6",
 			"claude-sonnet-4-5",
 			"claude-haiku-4-5",
+		]),
+		openai: new Set([
+			"gpt-5.4",
+			"gpt-5.4-pro",
+			"gpt-5.3-codex",
+			"gpt-5.3-codex-spark",
+			"gpt-5.2-codex",
+			"gpt-5.2-pro",
+			"codex-mini-latest",
 		]),
 		google: new Set([
 			"gemini-2.5-flash",
@@ -190,6 +207,22 @@ export class ModelSelector extends DialogBase {
 			"grok-4-1-fast",
 			"grok-4-1-fast-non-reasoning",
 			"grok-code-fast-1",
+		]),
+		minimax: new Set([
+			"MiniMax-M2.5",
+			"MiniMax-M2.5-highspeed",
+			"MiniMax-M2.1",
+		]),
+		zai: new Set([
+			"glm-5",
+			"glm-4.7",
+			"glm-4.7-flash",
+			"glm-4.6",
+			"glm-4.6v",
+		]),
+		"kimi-coding": new Set([
+			"k2p5",
+			"kimi-k2-thinking",
 		]),
 	};
 
