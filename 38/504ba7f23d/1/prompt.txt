@@ -1,0 +1,5 @@
+before commit the changes, let's do a thorough design choice research. I'd like to know if our changes voilate any of our existing design patterns
+
+---
+
+yes, let's address them
