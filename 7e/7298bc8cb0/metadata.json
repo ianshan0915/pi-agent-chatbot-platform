@@ -1,0 +1,25 @@
+{
+  "cli_version": "0.5.0",
+  "checkpoint_id": "7e7298bc8cb0",
+  "strategy": "manual-commit",
+  "branch": "dev/cloud-deployment",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".env.development.example"
+  ],
+  "sessions": [
+    {
+      "metadata": "/7e/7298bc8cb0/0/metadata.json",
+      "transcript": "/7e/7298bc8cb0/0/full.jsonl",
+      "content_hash": "/7e/7298bc8cb0/0/content_hash.txt",
+      "prompt": "/7e/7298bc8cb0/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 52,
+    "cache_creation_tokens": 66037,
+    "cache_read_tokens": 2487993,
+    "output_tokens": 13099,
+    "api_call_count": 42
+  }
+}

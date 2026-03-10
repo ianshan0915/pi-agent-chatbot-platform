@@ -1,0 +1,5 @@
+wait a sec, why add it to .env.development.example would would work? are we load this env file when running the app on aws? do we have better way to do this? like aws secrets
+
+---
+
+should we clean up the env.development.example, moving the OAUTH_GOOGLE_CLIENT_ID and OAUTH_GOOGLE_CLIENT_SECRET to .env.development? moreover, the pre-existing warninig should be fixed
