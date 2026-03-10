@@ -1,0 +1,13 @@
+@src/web-ui/dialogs/ModelSelector.ts, for openai models, we don't have the latest models, why is it? do we need to upgrade our pi-ai, pi-agent-core, or pi-coding-agent packages? the latest model is already 5.4. I'd like you to double check kimi models as well
+
+---
+
+yes
+
+---
+
+we could remove any gpt-5.1 and gpt-5 models
+
+---
+
+another questions about design patterns, are there a good design patter we could follow for the model allow list, since whenever there is a new model we need to do an upgrade, not sure this is the best approach

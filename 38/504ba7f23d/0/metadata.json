@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.5.0",
+  "checkpoint_id": "38504ba7f23d",
+  "session_id": "28757428-79b8-4d93-927a-a0869878ec76",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-10T22:17:04.369536Z",
+  "branch": "dev/cloud-deployment",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "server/index.ts",
+    "server/routes/oauth.ts",
+    "server/services/oauth-service.ts",
+    "src/components/OAuthConnectionsPanel.ts",
+    "src/web-ui/dialogs/ModelSelector.ts"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "218e18519a9e",
+  "token_usage": {
+    "input_tokens": 15,
+    "cache_creation_tokens": 22576,
+    "cache_read_tokens": 192801,
+    "output_tokens": 2841,
+    "api_call_count": 7
+  },
+  "session_metrics": {
+    "turn_count": 4
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-10T22:17:03.900082Z",
+    "agent_lines": 395,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 395,
+    "agent_percentage": 100
+  }
+}
