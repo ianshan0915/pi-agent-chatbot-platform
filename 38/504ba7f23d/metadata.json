@@ -3,7 +3,7 @@
   "checkpoint_id": "38504ba7f23d",
   "strategy": "manual-commit",
   "branch": "dev/cloud-deployment",
-  "checkpoints_count": 6,
+  "checkpoints_count": 16,
   "files_touched": [
     "server/index.ts",
     "server/routes/oauth.ts",
@@ -23,13 +23,19 @@
       "transcript": "/38/504ba7f23d/1/full.jsonl",
       "content_hash": "/38/504ba7f23d/1/content_hash.txt",
       "prompt": "/38/504ba7f23d/1/prompt.txt"
+    },
+    {
+      "metadata": "/38/504ba7f23d/2/metadata.json",
+      "transcript": "/38/504ba7f23d/2/full.jsonl",
+      "content_hash": "/38/504ba7f23d/2/content_hash.txt",
+      "prompt": "/38/504ba7f23d/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 38,
-    "cache_creation_tokens": 68183,
-    "cache_read_tokens": 920828,
-    "output_tokens": 10050,
-    "api_call_count": 24
+    "input_tokens": 157,
+    "cache_creation_tokens": 209147,
+    "cache_read_tokens": 9815280,
+    "output_tokens": 64077,
+    "api_call_count": 121
   }
 }

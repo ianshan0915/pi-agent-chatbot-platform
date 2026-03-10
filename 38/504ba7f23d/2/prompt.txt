@@ -1,0 +1,43 @@
+for ai subscription  openai, we got the following error while do oauth.
+An error occurred during authentication. Please try again.
+You can contact us through our help center at help.openai.com if you keep seeing this error. (Please include the request ID c5829d7d-4855-44b0-8ff0-4574f35b21d8 in your email.)
+
+---
+
+I got this error when trying to login
+Firefox kan geen verbinding maken met de server op localhost:1455.
+http://localhost:1455/auth/callback?REDACTED.REDACTED&scope=openid+profile+email+offline_access&state=openai-codex-068f330e-b53c-4c57-b0d4-0250d29ba914-1773174057958
+
+---
+
+I got this again, you have made it worse. 
+An error occurred during authentication (unknown_error). Please try again.
+You can contact us through our help center at help.openai.com if you keep seeing this error. (Please include the request ID c1da0650-6785-442f-894a-c2ce0388a07e in your email.)
+
+---
+
+in the selected providers list, why openai is not included?
+
+---
+
+give me a complete list of supported providers
+
+---
+
+yes, let's follow the same pattern for other providers, we only want to keep a list of most recent models for each provider
+
+---
+
+cerebras, mistral and groq, i don't need these three providers
+
+---
+
+two things. first I want to add google antigravity oauth. secondly openai codex oauth the final token is not displayed properly, there is not layout in it, just plain text.
+
+---
+
+for fallback, I see that we got a bit layout, not just plain text. can we have the same fallback page as anthropic, there is a copy button for the token. Moreover, will this work on aws for all the different port? how anthropic does it? does it have also a different port?
+
+---
+
+what exactly do users need to do? this is quite complicated. can we research how other apps do this? like opencode, or openclaw
