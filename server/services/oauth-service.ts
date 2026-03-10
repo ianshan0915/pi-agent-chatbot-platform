@@ -70,10 +70,11 @@ export class OAuthService {
 			throw new Error("Cannot specify both userId and teamId");
 		}
 
-		// Encrypt both tokens as a single blob so they share the same DEK/IV.
+		// Encrypt all credential fields as a single blob so they share the same DEK/IV.
 		// The encrypted_refresh column stores the combined blob; encrypted_access
 		// is set to an empty buffer (kept for schema compatibility).
-		const combined = JSON.stringify({ refresh: credentials.refresh, access: credentials.access });
+		// Extra fields (e.g. projectId for Antigravity) are preserved.
+		const combined = JSON.stringify(credentials);
 		const envelope = this.crypto.encrypt(combined);
 
 		const expiresAt = new Date(credentials.expires);
@@ -150,11 +151,10 @@ export class OAuthService {
 			keyVersion: row.key_version,
 		});
 
-		const { refresh, access } = JSON.parse(combined) as { refresh: string; access: string };
+		const parsed = JSON.parse(combined) as OAuthCredentials;
 
 		return {
-			refresh,
-			access,
+			...parsed,
 			expires: row.expires_at.getTime(),
 		};
 	}

@@ -34,10 +34,10 @@ const PROVIDER_DESCRIPTIONS: Record<string, string> = {
 };
 
 // Providers that are fully supported
-const SUPPORTED_PROVIDERS = new Set(["anthropic", "openai-codex"]);
+const SUPPORTED_PROVIDERS = new Set(["anthropic", "openai-codex", "google-antigravity"]);
 
 // Providers that need additional implementation (device code flow, etc.)
-const COMING_SOON_PROVIDERS = new Set(["github-copilot", "google-gemini-cli", "google-antigravity"]);
+const COMING_SOON_PROVIDERS = new Set(["github-copilot", "google-gemini-cli"]);
 
 @customElement("oauth-connections-panel")
 export class OAuthConnectionsPanel extends LitElement {
@@ -236,9 +236,93 @@ export class OAuthConnectionsPanel extends LitElement {
 	/** Reference to the open OAuth popup */
 	private oauthPopup: Window | null = null;
 
+	/** Bound handler for postMessage events from OAuth popup */
+	private boundMessageHandler: ((e: MessageEvent) => void) | null = null;
+
+	/** Whether to show the manual paste fallback hint */
+	@state()
+	private showPasteFallback = false;
+
+	/** Timer for fallback hint */
+	private fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
 	override connectedCallback() {
 		super.connectedCallback();
 		this.loadConnections();
+
+		// Listen for postMessage from OAuth callback popup
+		this.boundMessageHandler = (e: MessageEvent) => this.handleOAuthMessage(e);
+		window.addEventListener("message", this.boundMessageHandler);
+	}
+
+	override disconnectedCallback() {
+		super.disconnectedCallback();
+		if (this.boundMessageHandler) {
+			window.removeEventListener("message", this.boundMessageHandler);
+			this.boundMessageHandler = null;
+		}
+		if (this.fallbackTimer) clearTimeout(this.fallbackTimer);
+	}
+
+	/** Handle postMessage from OAuth callback page */
+	private handleOAuthMessage(e: MessageEvent) {
+		if (!e.data || e.data.type !== "oauth-callback") return;
+		// Only accept messages from localhost origins (our OAuth callback servers)
+		// or same-origin (main server route). The sender uses "*" target because
+		// the callback page can't know the opener's origin cross-origin, but we
+		// validate the source here + match the PKCE state below.
+		if (e.origin && !e.origin.startsWith("http://localhost:") && e.origin !== window.location.origin) {
+			return;
+		}
+		const { code, state } = e.data;
+		if (!code || !state) return;
+		// Verify this matches our pending flow
+		if (state !== this.pendingState) return;
+
+		// Auto-complete the flow
+		this.completeOAuthExchange(code, state);
+	}
+
+	/** Complete token exchange with the server */
+	private async completeOAuthExchange(code: string, state: string) {
+		const provider = this.pendingCodeProvider;
+		if (!provider) return;
+
+		// Clear timers
+		if (this.fallbackTimer) { clearTimeout(this.fallbackTimer); this.fallbackTimer = null; }
+		this.showPasteFallback = false;
+
+		// Close popup if still open
+		if (this.oauthPopup && !this.oauthPopup.closed) {
+			this.oauthPopup.close();
+		}
+
+		// Clear pending state
+		this.pendingCodeProvider = null;
+		this.pendingState = null;
+		this.oauthPopup = null;
+
+		try {
+			const callbackResult = await this.fetchApi(`/api/oauth/${provider}/callback`, {
+				method: "POST",
+				body: JSON.stringify({ code, state }),
+			});
+
+			if (callbackResult.success) {
+				this.statusMessage = `Successfully connected ${PROVIDER_LABELS[provider]}`;
+				this.statusType = "success";
+				await this.loadConnections();
+			} else {
+				this.statusMessage = callbackResult.error || "Failed to complete OAuth flow";
+				this.statusType = "error";
+			}
+		} catch (err) {
+			console.error("OAuth connection error:", err);
+			this.statusMessage = "Network error";
+			this.statusType = "error";
+		} finally {
+			this.connecting = { ...this.connecting, [provider]: false };
+		}
 	}
 
 	private fetchApi = (url: string, options?: RequestInit) => apiFetch(url, options, this.getToken);
@@ -294,7 +378,18 @@ export class OAuthConnectionsPanel extends LitElement {
 			this.oauthPopup = popup;
 			this.pendingState = state;
 			this.pendingCodeProvider = provider;
-			// connecting state stays true — cleared when code is submitted or cancelled
+			this.showPasteFallback = false;
+
+			// For providers using localhost redirects, show fallback paste
+			// instructions after a delay in case postMessage doesn't work (cloud)
+			if (this.fallbackTimer) clearTimeout(this.fallbackTimer);
+			if (provider !== "anthropic") {
+				this.fallbackTimer = setTimeout(() => {
+					if (this.pendingCodeProvider) {
+						this.showPasteFallback = true;
+					}
+				}, 5000);
+			}
 		} catch (err) {
 			console.error("OAuth connection error:", err);
 			this.statusMessage = "Network error";
@@ -309,11 +404,17 @@ export class OAuthConnectionsPanel extends LitElement {
 		if (!provider || !state) return;
 
 		const input = this.shadowRoot?.querySelector<HTMLInputElement>("#oauth-code-input");
-		const rawCode = input?.value?.trim();
-		if (!rawCode) return;
+		const rawValue = input?.value?.trim();
+		if (!rawValue) return;
 
-		// Extract code from "code#state" format that some providers use
-		const code = rawCode.split("#")[0];
+		// Parse input: accept a full redirect URL, "code#state" format, or bare code
+		let code: string;
+		try {
+			const url = new URL(rawValue);
+			code = url.searchParams.get("code") || rawValue;
+		} catch {
+			code = rawValue.split("#")[0];
+		}
 
 		// Close popup if still open
 		if (this.oauthPopup && !this.oauthPopup.closed) {
@@ -350,6 +451,8 @@ export class OAuthConnectionsPanel extends LitElement {
 
 	private handleCodeCancel() {
 		const provider = this.pendingCodeProvider;
+		if (this.fallbackTimer) { clearTimeout(this.fallbackTimer); this.fallbackTimer = null; }
+		this.showPasteFallback = false;
 		if (this.oauthPopup && !this.oauthPopup.closed) {
 			this.oauthPopup.close();
 		}
@@ -406,13 +509,22 @@ export class OAuthConnectionsPanel extends LitElement {
 			${this.pendingCodeProvider
 				? html`
 					<div class="code-input-card">
-						<label>Paste the authorization code for ${PROVIDER_LABELS[this.pendingCodeProvider]}</label>
-						<span class="hint">Authorize in the popup window, then copy the code shown on the page and paste it below.</span>
+						${this.pendingCodeProvider === "anthropic"
+							? html`
+								<label>Paste the authorization code for ${PROVIDER_LABELS[this.pendingCodeProvider]}</label>
+								<span class="hint">Authorize in the popup window, then copy the code shown on the page and paste it below.</span>`
+							: html`
+								<label>Connecting ${PROVIDER_LABELS[this.pendingCodeProvider]}...</label>
+								<span class="hint">Authorize in the popup window. It should complete automatically.</span>
+								${this.showPasteFallback
+									? html`<span class="hint" style="color: var(--foreground, #111827); font-weight: 500;">If the popup shows an error page, copy the full URL from its address bar and paste it below.</span>`
+									: null}`
+						}
 						<div class="code-input-row">
 							<input
 								id="oauth-code-input"
 								type="text"
-								placeholder="Paste authorization code here"
+								placeholder="Paste code or redirect URL"
 								@keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this.handleCodeSubmit(); }}
 							/>
 							<button class="btn-primary" @click=${() => this.handleCodeSubmit()}>Submit</button>

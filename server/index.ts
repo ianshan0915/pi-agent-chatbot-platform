@@ -51,6 +51,79 @@ import { seedSkills } from "./db/seed-skills.js";
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const isDev = process.env.NODE_ENV !== "production";
+
+// OAuth callback HTML — relays code+state to the opener window via postMessage.
+// Falls back to showing the code with a copy button (like Anthropic's callback page).
+const OAUTH_CALLBACK_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Authorization</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f9fafb;color:#111827}
+.card{background:#fff;border-radius:12px;padding:2.5rem;box-shadow:0 1px 3px rgba(0,0,0,.1);text-align:center;max-width:420px;width:90%}
+.icon{font-size:3rem;margin-bottom:1rem}
+h1{font-size:1.125rem;font-weight:600;margin-bottom:.5rem}
+p{color:#6b7280;font-size:.875rem;line-height:1.5}
+.code-box{display:flex;align-items:center;gap:.5rem;margin-top:1rem;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:.5rem .75rem}
+.code-box code{flex:1;font-size:.8rem;word-break:break-all;text-align:left;user-select:all;color:#111827}
+.copy-btn{flex-shrink:0;padding:.375rem .75rem;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:.8rem;font-weight:500;cursor:pointer;transition:background .15s}
+.copy-btn:hover{background:#1d4ed8}
+.copy-btn.copied{background:#16a34a}
+.hint{margin-top:.75rem;font-size:.75rem;color:#9ca3af}
+</style>
+</head>
+<body>
+<div class="card">
+<div class="icon" id="icon"></div>
+<h1 id="title"></h1>
+<p id="msg"></p>
+<div id="code-area" style="display:none">
+  <div class="code-box">
+    <code id="code-display"></code>
+    <button class="copy-btn" id="copy-btn" onclick="copyCode()">Copy</button>
+  </div>
+  <p class="hint">Paste this code in the app to finish connecting.</p>
+</div>
+</div>
+<script>
+function copyCode(){
+  var code=document.getElementById("code-display").textContent;
+  navigator.clipboard.writeText(code).then(function(){
+    var btn=document.getElementById("copy-btn");
+    btn.textContent="Copied!";btn.classList.add("copied");
+    setTimeout(function(){btn.textContent="Copy";btn.classList.remove("copied")},2000);
+  });
+}
+(function(){
+  var p=new URLSearchParams(location.search);
+  var code=p.get("code"),state=p.get("state");
+  var iconEl=document.getElementById("icon"),titleEl=document.getElementById("title"),msgEl=document.getElementById("msg");
+  if(code&&state&&window.opener){
+    // "*" target: callback runs on a different port than the opener so we can't
+    // specify the exact origin. Security is enforced on the receiving side
+    // (origin check + PKCE state validation in OAuthConnectionsPanel).
+    window.opener.postMessage({type:"oauth-callback",code:code,state:state},"*");
+    iconEl.textContent="\\u2705";titleEl.textContent="Authorization Complete";
+    msgEl.textContent="You can close this window.";
+  }else if(code){
+    iconEl.textContent="\\u2705";titleEl.textContent="Authorization Complete";
+    msgEl.textContent="Copy the code below and paste it in the app.";
+    document.getElementById("code-display").textContent=code;
+    document.getElementById("code-area").style.display="block";
+  }else{
+    iconEl.textContent="\\u274c";titleEl.textContent="Authorization Failed";
+    msgEl.textContent="No authorization code received.";
+  }
+})();
+</script>
+</body></html>`;
+
+function oauthCallbackHandler(_req: any, res: any) {
+	res.setHeader("Content-Type", "text/html; charset=utf-8");
+	res.end(OAUTH_CALLBACK_HTML);
+}
 async function main() {
 	// Initialize database and run migrations
 	const db = createDatabase();
@@ -176,6 +249,10 @@ async function main() {
 
 	// Track active CWDs per user (for agent-files endpoint)
 	const activeUserCwds = new Map<string, string>();
+
+	// --- OAuth callback page (also served on port 1455 below) ---
+	// Kept on the main Express server for cloud deployments with custom OAuth clients.
+	app.get("/auth/openai-callback", apiRateLimit, oauthCallbackHandler);
 
 	// --- API Routes ---
 	app.use("/api/auth", authRateLimit, authRouter);
@@ -481,11 +558,48 @@ async function main() {
 		server.on("upgrade", handleUpgrade);
 	}
 
+	// --- OAuth callback servers ---
+	// Each OAuth provider has a fixed localhost redirect URI. We start lightweight
+	// HTTP servers on the required ports to capture the redirect and relay the
+	// authorization code to the opener window via postMessage.
+	const oauthCallbackServers: Array<ReturnType<typeof createServer>> = [];
+
+	function startOAuthCallbackServer(port: number, path: string, envOverride?: string) {
+		if (envOverride && process.env[envOverride]) return; // custom redirect, skip
+		const srv = createServer((req, res) => {
+			const url = new URL(req.url || "", `http://localhost:${port}`);
+			if (url.pathname === path) {
+				res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+				res.end(OAUTH_CALLBACK_HTML);
+			} else {
+				res.writeHead(404);
+				res.end("Not found");
+			}
+		});
+		srv.listen(port, "127.0.0.1", () => {
+			console.log(`[server] OAuth callback on http://localhost:${port}${path}`);
+		});
+		srv.on("error", (err: NodeJS.ErrnoException) => {
+			if (err.code === "EADDRINUSE") {
+				console.warn(`[server] Port ${port} in use — OAuth callback skipped (manual paste still works)`);
+			} else {
+				console.error(`[server] OAuth callback server error (port ${port}):`, err);
+			}
+		});
+		oauthCallbackServers.push(srv);
+	}
+
+	// OpenAI: http://localhost:1455/auth/callback
+	startOAuthCallbackServer(1455, "/auth/callback", "OAUTH_OPENAI_REDIRECT_URI");
+	// Google Antigravity: http://localhost:51121/oauth-callback
+	startOAuthCallbackServer(51121, "/oauth-callback", "OAUTH_ANTIGRAVITY_REDIRECT_URI");
+
 	// Graceful shutdown
 	const gracefulShutdown = async (signal: string) => {
 		console.log(`[server] Received ${signal}, shutting down gracefully...`);
 		await taskQueueService.shutdown();
 		await sessionPool.shutdown();
+		for (const srv of oauthCallbackServers) srv.close();
 		server.close(() => {
 			console.log("[server] HTTP server closed");
 			process.exit(0);
