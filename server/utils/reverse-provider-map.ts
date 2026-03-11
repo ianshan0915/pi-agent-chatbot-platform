@@ -45,5 +45,7 @@ for (const [provider, envVar] of Object.entries(OAUTH_PROVIDER_ENV_MAP)) {
  * envVarToProvider("UNKNOWN_KEY")       // null
  */
 export function envVarToProvider(envVar: string): string | null {
+	if (envVar === "OPENAI_CODEX_API_KEY") return "openai-codex";
+	if (envVar === "OPENAI_ACCOUNT_ID") return "openai-codex";
 	return ENV_VAR_TO_PROVIDER[envVar] ?? null;
 }

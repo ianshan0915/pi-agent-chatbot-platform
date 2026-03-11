@@ -163,6 +163,7 @@ export class ModelSelector extends DialogBase {
 	private static ALLOWED_PROVIDERS = new Set([
 		"anthropic",
 		"openai",
+		"openai-codex",
 		"google",
 		"xai",
 		"minimax",
@@ -183,6 +184,15 @@ export class ModelSelector extends DialogBase {
 			"claude-haiku-4-5",
 		]),
 		openai: new Set([
+			"gpt-5.4",
+			"gpt-5.4-pro",
+			"gpt-5.3-codex",
+			"gpt-5.3-codex-spark",
+			"gpt-5.2-codex",
+			"gpt-5.2-pro",
+			"codex-mini-latest",
+		]),
+		"openai-codex": new Set([
 			"gpt-5.4",
 			"gpt-5.4-pro",
 			"gpt-5.3-codex",
@@ -301,66 +311,65 @@ export class ModelSelector extends DialogBase {
 			<div class="p-6 pb-4 flex flex-col gap-4 border-b border-border flex-shrink-0">
 				${DialogHeader({ title: i18n("Select Model") })}
 				${Input({
-					placeholder: i18n("Search models..."),
-					value: this.searchQuery,
-					inputRef: this.searchInputRef,
-					onInput: (e: Event) => {
-						this.searchQuery = (e.target as HTMLInputElement).value;
-						this.selectedIndex = 0;
-						// Reset scroll position when search changes
-						if (this.scrollContainerRef.value) {
-							this.scrollContainerRef.value.scrollTop = 0;
-						}
-					},
-				})}
+			placeholder: i18n("Search models..."),
+			value: this.searchQuery,
+			inputRef: this.searchInputRef,
+			onInput: (e: Event) => {
+				this.searchQuery = (e.target as HTMLInputElement).value;
+				this.selectedIndex = 0;
+				// Reset scroll position when search changes
+				if (this.scrollContainerRef.value) {
+					this.scrollContainerRef.value.scrollTop = 0;
+				}
+			},
+		})}
 				<div class="flex gap-2">
 					${Button({
-						variant: this.filterThinking ? "default" : "secondary",
-						size: "sm",
-						onClick: () => {
-							this.filterThinking = !this.filterThinking;
-							this.selectedIndex = 0;
-							if (this.scrollContainerRef.value) {
-								this.scrollContainerRef.value.scrollTop = 0;
-							}
-						},
-						className: "rounded-full",
-						children: html`<span class="inline-flex items-center gap-1">${icon(Brain, "sm")} ${i18n("Thinking")}</span>`,
-					})}
+			variant: this.filterThinking ? "default" : "secondary",
+			size: "sm",
+			onClick: () => {
+				this.filterThinking = !this.filterThinking;
+				this.selectedIndex = 0;
+				if (this.scrollContainerRef.value) {
+					this.scrollContainerRef.value.scrollTop = 0;
+				}
+			},
+			className: "rounded-full",
+			children: html`<span class="inline-flex items-center gap-1">${icon(Brain, "sm")} ${i18n("Thinking")}</span>`,
+		})}
 					${Button({
-						variant: this.filterVision ? "default" : "secondary",
-						size: "sm",
-						onClick: () => {
-							this.filterVision = !this.filterVision;
-							this.selectedIndex = 0;
-							if (this.scrollContainerRef.value) {
-								this.scrollContainerRef.value.scrollTop = 0;
-							}
-						},
-						className: "rounded-full",
-						children: html`<span class="inline-flex items-center gap-1">${icon(ImageIcon, "sm")} ${i18n("Vision")}</span>`,
-					})}
+			variant: this.filterVision ? "default" : "secondary",
+			size: "sm",
+			onClick: () => {
+				this.filterVision = !this.filterVision;
+				this.selectedIndex = 0;
+				if (this.scrollContainerRef.value) {
+					this.scrollContainerRef.value.scrollTop = 0;
+				}
+			},
+			className: "rounded-full",
+			children: html`<span class="inline-flex items-center gap-1">${icon(ImageIcon, "sm")} ${i18n("Vision")}</span>`,
+		})}
 				</div>
 			</div>
 
 			<!-- Scrollable model list -->
 			<div class="flex-1 overflow-y-auto" ${ref(this.scrollContainerRef)}>
 				${filteredModels.map(({ provider, id, model }, index) => {
-					const isCurrent = modelsAreEqual(this.currentModel, model);
-					const isSelected = index === this.selectedIndex;
-					return html`
+			const isCurrent = modelsAreEqual(this.currentModel, model);
+			const isSelected = index === this.selectedIndex;
+			return html`
 						<div
 							data-model-item
-							class="px-4 py-3 ${
-								this.navigationMode === "mouse" ? "hover:bg-muted" : ""
-							} cursor-pointer border-b border-border ${isSelected ? "bg-accent" : ""}"
+							class="px-4 py-3 ${this.navigationMode === "mouse" ? "hover:bg-muted" : ""
+				} cursor-pointer border-b border-border ${isSelected ? "bg-accent" : ""}"
 							@click=${() => this.handleSelect(model)}
 							@mouseenter=${() => {
-								// Only update selection in mouse mode
-								if (this.navigationMode === "mouse") {
-									this.selectedIndex = index;
-								}
-							}}
+					// Only update selection in mouse mode
+					if (this.navigationMode === "mouse") {
+						this.selectedIndex = index;
+					}
+				}}
 						>
 							<div class="flex items-center justify-between gap-2 mb-1">
 								<div class="flex items-center gap-2 flex-1 min-w-0">
@@ -379,7 +388,7 @@ export class ModelSelector extends DialogBase {
 							</div>
 						</div>
 					`;
-				})}
+		})}
 			</div>
 		`;
 	}

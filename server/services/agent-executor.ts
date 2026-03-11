@@ -100,13 +100,30 @@ export class AgentExecutor {
 		// OAuth credentials (override team keys) — batch all providers in parallel
 		const oauthService = new OAuthService(this.db.pool, this.crypto);
 		const oauthEntries = Object.entries(OAUTH_PROVIDER_ENV_MAP);
+		console.log(`[agent-executor] Checking OAuth for ${oauthEntries.length} provider(s): ${oauthEntries.map(e => e[0]).join(', ')}`);
 		const oauthResults = await Promise.allSettled(
 			oauthEntries.map(([providerId]) => oauthService.getApiKey(providerId as any, { userId })),
 		);
 		for (let i = 0; i < oauthEntries.length; i++) {
 			const result = oauthResults[i];
+			const [providerId, envVar] = oauthEntries[i];
 			if (result.status === "fulfilled" && result.value) {
-				env[oauthEntries[i][1]] = result.value;
+				console.log(`[agent-executor] OAuth ${providerId} → ${envVar} = (${result.value.length} chars)`);
+				env[envVar] = result.value;
+
+				// Inject accountId for OpenAI Codex (required for ChatGPT subscription endpoints)
+				if (providerId === "openai-codex") {
+					env["OPENAI_CODEX_API_KEY"] = result.value;
+					const creds = await oauthService.getCredentials(providerId, { userId });
+					if (creds && creds.accountId) {
+						env["OPENAI_ACCOUNT_ID"] = String(creds.accountId);
+						console.log(`[agent-executor] OAuth openai-codex → injected OPENAI_ACCOUNT_ID=${creds.accountId}`);
+					}
+				}
+			} else if (result.status === "rejected") {
+				console.error(`[agent-executor] OAuth ${providerId} FAILED:`, result.reason);
+			} else {
+				console.log(`[agent-executor] OAuth ${providerId} → no credentials found`);
 			}
 		}
 
@@ -191,7 +208,7 @@ export class AgentExecutor {
 		const cleanup = async () => {
 			resolvedSkills.cleanup();
 			if (tempFilesDir) {
-				await fs.rm(tempFilesDir, { recursive: true, force: true }).catch(() => {});
+				await fs.rm(tempFilesDir, { recursive: true, force: true }).catch(() => { });
 			}
 		};
 

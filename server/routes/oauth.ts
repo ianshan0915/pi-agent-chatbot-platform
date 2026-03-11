@@ -281,6 +281,23 @@ export function createOAuthRouter(crypto: CryptoService): Router {
 				expires: expiresAt,
 			};
 
+			// For OpenAI Codex, extract accountId from the JWT
+			if (provider === "openai-codex") {
+				try {
+					const parts = tokenData.access_token.split(".");
+					if (parts.length === 3) {
+						const payload = JSON.parse(Buffer.from(parts[1], "base64").toString());
+						const accountId = payload["https://api.openai.com/auth"]?.chatgpt_account_id;
+						if (accountId) {
+							credentials.accountId = accountId;
+							console.log(`[oauth] OpenAI Codex accountId: ${accountId}`);
+						}
+					}
+				} catch (e) {
+					console.error("[oauth] Failed to extract accountId from OpenAI token:", e);
+				}
+			}
+
 			// Antigravity requires project discovery after token exchange
 			if (provider === "google-antigravity") {
 				credentials.projectId = await discoverAntigravityProject(tokenData.access_token);

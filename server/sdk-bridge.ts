@@ -68,6 +68,8 @@ const PREFERRED_DEFAULT_MODELS = [
 	{ provider: "anthropic", id: "claude-sonnet-4-5" },
 	{ provider: "anthropic", id: "claude-sonnet-4-6" },
 	{ provider: "anthropic", id: "claude-haiku-4-5" },
+	{ provider: "openai-codex", id: "gpt-5.4" },
+	{ provider: "openai-codex", id: "gpt-5.4-pro" },
 	{ provider: "google", id: "gemini-2.5-flash" },
 	{ provider: "xai", id: "grok-4-fast" },
 	{ provider: "zai", id: "glm-4.7" },
@@ -271,17 +273,26 @@ export class SdkBridge {
 			this.db.query(
 				`INSERT INTO provider_key_audit_log (team_id, user_id, provider, action) VALUES ${values}`,
 				[this.user.teamId, this.user.userId, ...providers],
-			).catch(() => {});
+			).catch(() => { });
 		}
 
 		// Build AuthStorage with runtime API keys from env map
 		this.authStorage = AuthStorage.inMemory();
+		console.log(`[sdk-bridge] envKeys received: [${Object.keys(envKeys).join(', ')}]`);
 		for (const [envVar, value] of Object.entries(envKeys)) {
 			const provider = envVarToProvider(envVar);
+			console.log(`[sdk-bridge] envVar=${envVar} → provider=${provider} keyLen=${value?.length}`);
 			if (provider) {
 				this.authStorage.setRuntimeApiKey(provider, value);
 				this.configuredProviders.add(provider);
 			}
+		}
+		console.log(`[sdk-bridge] configuredProviders: [${[...this.configuredProviders].join(', ')}]`);
+		// Debug: check what models are available after key injection
+		{
+			const debugRegistry = new ModelRegistry(this.authStorage);
+			const available = debugRegistry.getAvailable();
+			console.log(`[sdk-bridge] DEBUG: ${available.length} model(s) available after key injection: ${available.slice(0, 5).map(m => `${m.provider}/${m.id}`).join(', ')}${available.length > 5 ? '...' : ''}`);
 		}
 
 		// Build the system prompt
@@ -394,7 +405,7 @@ export class SdkBridge {
 					if (bufferedLines.length > 0) {
 						console.log(`[sdk-bridge] Sending ${bufferedLines.length} buffered line(s)`);
 						for (const line of bufferedLines) {
-							try { this.ws.send(line); } catch {}
+							try { this.ws.send(line); } catch { }
 						}
 					}
 				} catch (err) {
@@ -404,7 +415,7 @@ export class SdkBridge {
 				// Notify client of reattachment
 				try {
 					this.ws.send(JSON.stringify({ type: "session_reattached", sessionId: this.options.sessionId }));
-				} catch {}
+				} catch { }
 
 				// Subscribe to events and forward to WS
 				this.subscribeToSession();
@@ -435,7 +446,7 @@ export class SdkBridge {
 
 		try {
 			this.ws.send(JSON.stringify({ type: "bridge_ready", sessionId: this.sessionId }));
-		} catch {}
+		} catch { }
 	}
 
 	/**
@@ -464,7 +475,9 @@ export class SdkBridge {
 		// If no model resolved, pick best default from preferred list, then configured providers
 		if (!model) {
 			const available = modelRegistry.getAvailable();
+			console.log(`[sdk-bridge] createSessionLazy: ${available.length} available model(s), configuredProviders=[${[...this.configuredProviders]}]`);
 			model = pickDefaultModel(available, this.configuredProviders);
+			console.log(`[sdk-bridge] createSessionLazy: pickDefaultModel → ${model ? `${model.provider}/${model.id}` : 'null'}`);
 		}
 
 		const { session, extensionsResult } = await createAgentSession({
@@ -525,7 +538,7 @@ export class SdkBridge {
 					type: "state_update",
 					model: { id: session.model.id, provider: session.model.provider, name: session.model.name, reasoning: (session.model as any).reasoning },
 				}));
-			} catch {}
+			} catch { }
 		}
 	}
 
@@ -553,7 +566,7 @@ export class SdkBridge {
 
 			// Detached mode: buffer to DB
 			if (this.detached) {
-				this.outputBufferService.append(this.sessionId, line).catch(() => {});
+				this.outputBufferService.append(this.sessionId, line).catch(() => { });
 				// Persist message_end events for reconnection
 				if (event.type === "message_end") {
 					this.persistDetachedMessage(line);
@@ -877,7 +890,7 @@ export class SdkBridge {
 						errorMessage: err.message,
 					},
 				}));
-			} catch {}
+			} catch { }
 		});
 
 		// Immediate acknowledgment so client's sendCommand() resolves
@@ -978,13 +991,13 @@ export class SdkBridge {
 	private sendResponse(requestId: string, data: any): void {
 		try {
 			this.ws.send(JSON.stringify({ id: requestId, type: "response", data }));
-		} catch {}
+		} catch { }
 	}
 
 	private sendError(requestId: string, error: string): void {
 		try {
 			this.ws.send(JSON.stringify({ id: requestId, type: "error", error }));
-		} catch {}
+		} catch { }
 	}
 
 	// =========================================================================
@@ -1054,28 +1067,28 @@ export class SdkBridge {
 						message,
 						notifType,
 					}));
-				} catch {}
+				} catch { }
 			},
 			// No-ops for server environment
-			onTerminalInput: () => () => {},
-			setStatus: () => {},
-			setWorkingMessage: () => {},
-			setWidget: () => {},
-			setFooter: () => {},
-			setHeader: () => {},
-			setTitle: () => {},
+			onTerminalInput: () => () => { },
+			setStatus: () => { },
+			setWorkingMessage: () => { },
+			setWidget: () => { },
+			setFooter: () => { },
+			setHeader: () => { },
+			setTitle: () => { },
 			custom: async () => undefined as any,
-			pasteToEditor: () => {},
-			setEditorText: () => {},
+			pasteToEditor: () => { },
+			setEditorText: () => { },
 			getEditorText: () => "",
 			editor: async () => undefined,
-			setEditorComponent: () => {},
+			setEditorComponent: () => { },
 			get theme(): any { return {}; },
 			getAllThemes: () => [],
 			getTheme: () => undefined,
 			setTheme: () => ({ success: false }),
 			getToolsExpanded: () => false,
-			setToolsExpanded: () => {},
+			setToolsExpanded: () => { },
 		};
 	}
 
@@ -1161,7 +1174,7 @@ export class SdkBridge {
 				success: false,
 				error: "API keys are managed by your team admin via the Provider Keys settings.",
 			}));
-		} catch {}
+		} catch { }
 	}
 
 	/**
@@ -1234,7 +1247,7 @@ export class SdkBridge {
 				this.db.query(
 					`UPDATE sessions SET message_count = message_count + 1, last_modified = NOW() WHERE id = $1`,
 					[this.sessionId],
-				).catch(() => {});
+				).catch(() => { });
 			}).catch((err) => {
 				console.error("[sdk-bridge] Failed to persist detached message:", err);
 			});
