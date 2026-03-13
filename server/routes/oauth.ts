@@ -243,7 +243,7 @@ export function createOAuthRouter(crypto: CryptoService): Router {
 			// Exchange code for tokens
 			// Anthropic's token endpoint requires JSON + state param;
 			// OpenAI/Google use standard form-encoded.
-			let tokenResponse: Response;
+			let tokenResponse: Awaited<ReturnType<typeof fetch>>;
 			if (provider === "anthropic") {
 				tokenResponse = await fetch(config.tokenUrl, {
 					method: "POST",
