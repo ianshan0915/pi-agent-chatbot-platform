@@ -1,0 +1,5 @@
+I got "Token exchange failed" when use anthropic oauth to authenticate. after I paste the authorization token, I got this error.
+
+---
+
+I tested it locally, it's not working. I was working before, I think this has something to do with the changes we made on oauth for codex and google
