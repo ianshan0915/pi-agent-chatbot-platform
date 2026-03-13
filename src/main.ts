@@ -15,12 +15,9 @@ import {
 	ChatPanel,
 	CustomProvidersStore,
 	ProviderKeysStore,
-	ProvidersModelsTab,
-	ProxyTab,
 	SessionsStore,
 	SettingsDialog,
 	SettingsStore,
-	SettingsTab,
 	setAppStorage,
 } from "./web-ui/index.js";
 import type { SessionMetadata } from "./web-ui/index.js";
@@ -1701,21 +1698,17 @@ const renderApp = () => {
 							${userMenuOpen ? html`
 								<div class="absolute right-0 top-full mt-1 w-48 bg-background border border-border rounded-md shadow-lg py-1 z-50">
 									<div class="px-3 py-2 text-xs text-muted-foreground border-b border-border">${user?.email || ""}</div>
-									<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer" @click=${() => {
+									${user?.role === "admin" ? html`<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left cursor-pointer" @click=${() => {
 										userMenuOpen = false;
-										const tabs: SettingsTab[] = [new ProvidersModelsTab(), new ProxyTab()];
-										if (user?.role === "admin") {
-											const t = new TeamMembersTab();
-											t.getToken = () => authClient.token;
-											t.currentUserId = user?.userId || "";
-											tabs.push(t);
-										}
-										SettingsDialog.open(tabs);
+										const t = new TeamMembersTab();
+										t.getToken = () => authClient.token;
+										t.currentUserId = user?.userId || "";
+										SettingsDialog.open([t]);
 										renderApp();
 									}}>
 										${icon(Settings, "sm")}
 										<span>Settings</span>
-									</button>
+									</button>` : nothing}
 									<button class="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left text-destructive cursor-pointer" @click=${() => {
 										userMenuOpen = false;
 										handleLogout();

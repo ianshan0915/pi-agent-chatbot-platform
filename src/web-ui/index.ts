@@ -7,7 +7,6 @@ export { ChatPanel } from "./ChatPanel.js";
 export { AgentInterface } from "./components/AgentInterface.js";
 export { AttachmentTile } from "./components/AttachmentTile.js";
 export { ConsoleBlock } from "./components/ConsoleBlock.js";
-export { CustomProviderCard } from "./components/CustomProviderCard.js";
 export { ExpandableSection } from "./components/ExpandableSection.js";
 export { Input } from "./components/Input.js";
 export { MessageEditor } from "./components/MessageEditor.js";
@@ -58,9 +57,8 @@ export { AttachmentOverlay } from "./dialogs/AttachmentOverlay.js";
 // Dialogs
 export { ModelSelector } from "./dialogs/ModelSelector.js";
 export { PersistentStorageDialog } from "./dialogs/PersistentStorageDialog.js";
-export { ProvidersModelsTab } from "./dialogs/ProvidersModelsTab.js";
 export { SessionListDialog } from "./dialogs/SessionListDialog.js";
-export { ApiKeysTab, ProxyTab, SettingsDialog, SettingsTab } from "./dialogs/SettingsDialog.js";
+export { SettingsDialog, SettingsTab } from "./dialogs/SettingsDialog.js";
 // Prompts
 export {
 	ARTIFACTS_RUNTIME_PROVIDER_DESCRIPTION_RO,

@@ -9,6 +9,7 @@ import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as appscaling from "aws-cdk-lib/aws-applicationautoscaling";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as ses from "aws-cdk-lib/aws-ses";
 import type { Construct } from "constructs";
@@ -35,7 +36,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		// ----------------------------------------------------------------
 		const vpc = new ec2.Vpc(this, "Vpc", {
 			maxAzs: 2,
-			natGateways: 1, // Keep costs low; 1 NAT is fine for non-HA start
+			natGateways: 1, // Phase 1: keep NAT while migrating to public subnets (remove in phase 2)
 			subnetConfiguration: [
 				{ name: "Public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
 				{ name: "Private", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
@@ -151,6 +152,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		const cluster = new ecs.Cluster(this, "Cluster", {
 			vpc,
 			containerInsights: true,
+			enableFargateCapacityProviders: true, // Register FARGATE + FARGATE_SPOT (used in phase 2)
 		});
 
 		// ----------------------------------------------------------------
@@ -303,7 +305,8 @@ export class ChatbotPlatformStack extends cdk.Stack {
 				taskDefinition,
 				desiredCount: 1,
 				publicLoadBalancer: true,
-				assignPublicIp: false, // Task in private subnet, outbound via NAT
+				assignPublicIp: true, // Public subnet — direct internet access
+				taskSubnets: { subnetType: ec2.SubnetType.PUBLIC },
 				// Domain configuration (if provided)
 				...(hostedZone && certificate && props.domainName
 					? {
@@ -335,6 +338,27 @@ export class ChatbotPlatformStack extends cdk.Stack {
 
 		// ALB idle timeout — WebSocket connections can be long-lived
 		fargateService.loadBalancer.setAttribute("idle_timeout.timeout_seconds", "3600");
+
+		// ----------------------------------------------------------------
+		// Scheduled scaling — shut down at night to save costs
+		// Times are UTC: 23:00 = midnight CET, 07:00 = 8am CET (off by 1h in summer)
+		// ----------------------------------------------------------------
+		const scaling = fargateService.service.autoScaleTaskCount({
+			minCapacity: 0,
+			maxCapacity: 1,
+		});
+
+		scaling.scaleOnSchedule("NightShutdown", {
+			schedule: appscaling.Schedule.cron({ hour: "23", minute: "0" }),
+			minCapacity: 0,
+			maxCapacity: 0,
+		});
+
+		scaling.scaleOnSchedule("MorningStartup", {
+			schedule: appscaling.Schedule.cron({ hour: "7", minute: "0" }),
+			minCapacity: 1,
+			maxCapacity: 1,
+		});
 
 		// Allow Fargate tasks to connect to RDS
 		dbSecurityGroup.addIngressRule(

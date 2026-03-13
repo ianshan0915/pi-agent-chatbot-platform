@@ -1,13 +1,7 @@
 import { i18n } from "@mariozechner/mini-lit";
 import { Dialog, DialogContent, DialogHeader } from "@mariozechner/mini-lit/dist/Dialog.js";
-import { Input } from "@mariozechner/mini-lit/dist/Input.js";
-import { Label } from "@mariozechner/mini-lit/dist/Label.js";
-import { Switch } from "@mariozechner/mini-lit/dist/Switch.js";
-import { getProviders } from "@mariozechner/pi-ai";
 import { html, LitElement, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import "../components/ProviderKeyInput.js";
-import { getAppStorage } from "../storage/app-storage.js";
 
 // Base class for settings tabs
 export abstract class SettingsTab extends LitElement {
@@ -15,100 +9,6 @@ export abstract class SettingsTab extends LitElement {
 
 	protected createRenderRoot() {
 		return this;
-	}
-}
-
-// API Keys Tab
-@customElement("api-keys-tab")
-export class ApiKeysTab extends SettingsTab {
-	getTabName(): string {
-		return i18n("API Keys");
-	}
-
-	render(): TemplateResult {
-		const providers = getProviders();
-
-		return html`
-			<div class="flex flex-col gap-6">
-				<p class="text-sm text-muted-foreground">
-					${i18n("Configure API keys for LLM providers. Keys are stored locally in your browser.")}
-				</p>
-				${providers.map((provider) => html`<provider-key-input .provider=${provider}></provider-key-input>`)}
-			</div>
-		`;
-	}
-}
-
-// Proxy Tab
-@customElement("proxy-tab")
-export class ProxyTab extends SettingsTab {
-	@state() private proxyEnabled = false;
-	@state() private proxyUrl = "http://localhost:3001";
-
-	override async connectedCallback() {
-		super.connectedCallback();
-		// Load proxy settings when tab is connected
-		try {
-			const storage = getAppStorage();
-			const enabled = await storage.settings.get<boolean>("proxy.enabled");
-			const url = await storage.settings.get<string>("proxy.url");
-
-			if (enabled !== null) this.proxyEnabled = enabled;
-			if (url !== null) this.proxyUrl = url;
-		} catch (error) {
-			console.error("Failed to load proxy settings:", error);
-		}
-	}
-
-	private async saveProxySettings() {
-		try {
-			const storage = getAppStorage();
-			await storage.settings.set("proxy.enabled", this.proxyEnabled);
-			await storage.settings.set("proxy.url", this.proxyUrl);
-		} catch (error) {
-			console.error("Failed to save proxy settings:", error);
-		}
-	}
-
-	getTabName(): string {
-		return i18n("Proxy");
-	}
-
-	render(): TemplateResult {
-		return html`
-			<div class="flex flex-col gap-4">
-				<p class="text-sm text-muted-foreground">
-					${i18n("Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z-AI and Anthropic with OAuth token.")}
-				</p>
-
-				<div class="flex items-center justify-between">
-					<span class="text-sm font-medium text-foreground">${i18n("Use CORS Proxy")}</span>
-					${Switch({
-						checked: this.proxyEnabled,
-						onChange: (checked: boolean) => {
-							this.proxyEnabled = checked;
-							this.saveProxySettings();
-						},
-					})}
-				</div>
-
-				<div class="space-y-2">
-					${Label({ children: i18n("Proxy URL") })}
-					${Input({
-						type: "text",
-						value: this.proxyUrl,
-						disabled: !this.proxyEnabled,
-						onInput: (e) => {
-							this.proxyUrl = (e.target as HTMLInputElement).value;
-						},
-						onChange: () => this.saveProxySettings(),
-					})}
-					<p class="text-xs text-muted-foreground">
-						${i18n("Format: The proxy must accept requests as <proxy-url>/?url=<target-url>")}
-					</p>
-				</div>
-			</div>
-		`;
 	}
 }
 
