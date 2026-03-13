@@ -1,0 +1,9 @@
+I check my aws billing, it's a bit higher than I expected. i'd like to do some optimization to save some costs. one idea is that we could stop our app in the nights 12:00 - 8:00 am. if you have any other ideas, please share it
+
+---
+
+yes, 1, 2, 3
+
+---
+
+double check if this will break the current running app
