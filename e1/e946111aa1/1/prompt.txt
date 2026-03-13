@@ -1,0 +1,41 @@
+is it possible to run agents in parallel so that we can get our results faster?
+
+---
+
+I mean for pi-coding-agent, does it support parallel tasks? or running (sub)agents in parallel? if so, how can we trigger it?
+
+---
+
+I mean if a user ask to create a report, after we got the question, how can we run search and synthesize in parallel? how does it work exactly? give me the workflow
+
+---
+
+that's subagents, what about tool calls? is pi-coding-agent able to run tool calls in parallel? it can decide this itself
+
+---
+
+but for read tool, it can mostly run in parallel, right?
+
+---
+
+web search is another example
+
+---
+
+what about 'opencode'? does it support this? I know claude code support this for sure.
+
+---
+
+can we use subagent parallelization to compensate this a bit?
+
+---
+
+summarize this research into a markdown file and store it in the project root. I need to investigate more on this topic.
+
+---
+
+what about codex? let's add codex
+
+---
+
+let's also add deep agents from langchain to the comparison
