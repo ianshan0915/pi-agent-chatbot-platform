@@ -3,7 +3,7 @@
   "checkpoint_id": "e1e946111aa1",
   "strategy": "manual-commit",
   "branch": "dev/cloud-deployment",
-  "checkpoints_count": 12,
+  "checkpoints_count": 14,
   "files_touched": [
     "src/main.ts",
     "src/web-ui/dialogs/ProvidersModelsTab.ts",
@@ -28,13 +28,19 @@
       "transcript": "/e1/e946111aa1/2/full.jsonl",
       "content_hash": "/e1/e946111aa1/2/content_hash.txt",
       "prompt": "/e1/e946111aa1/2/prompt.txt"
+    },
+    {
+      "metadata": "/e1/e946111aa1/3/metadata.json",
+      "transcript": "/e1/e946111aa1/3/full.jsonl",
+      "content_hash": "/e1/e946111aa1/3/content_hash.txt",
+      "prompt": "/e1/e946111aa1/3/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 257,
-    "cache_creation_tokens": 171393,
-    "cache_read_tokens": 1806143,
-    "output_tokens": 19499,
-    "api_call_count": 47
+    "input_tokens": 265,
+    "cache_creation_tokens": 184545,
+    "cache_read_tokens": 1879939,
+    "output_tokens": 19874,
+    "api_call_count": 51
   }
 }

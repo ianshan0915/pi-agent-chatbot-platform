@@ -1,0 +1,5 @@
+add this email to the verified email in aws ses. carldb86@gmail.com
+
+---
+
+this user is registering on my app, we want to make sure that he can receive verfication email
