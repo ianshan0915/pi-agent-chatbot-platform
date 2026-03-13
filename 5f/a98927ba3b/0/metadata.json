@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.5.0",
+  "checkpoint_id": "5fa98927ba3b",
+  "session_id": "c13e178e-9e8a-488e-b5bc-d9f3326f4bc4",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-13T15:44:39.79494Z",
+  "branch": "dev/cloud-deployment",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "infra/lib/chatbot-stack.ts"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "79374c9abf23",
+  "checkpoint_transcript_start": 188,
+  "transcript_lines_at_start": 188,
+  "token_usage": {
+    "input_tokens": 12,
+    "cache_creation_tokens": 2608,
+    "cache_read_tokens": 566403,
+    "output_tokens": 1446,
+    "api_call_count": 8
+  },
+  "session_metrics": {
+    "turn_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-13T15:44:38.938145Z",
+    "agent_lines": 6,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 6,
+    "agent_percentage": 100
+  }
+}
