@@ -1,0 +1,5 @@
+in settings we have model and providers, a long list which is a bit redudant since we already have this ai subscriptions and provider keys
+
+---
+
+remove the entire providers & models, also not sure about what to do with proxy, maybe remove it as well

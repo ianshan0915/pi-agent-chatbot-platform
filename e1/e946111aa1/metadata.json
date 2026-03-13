@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.5.0",
+  "checkpoint_id": "e1e946111aa1",
+  "strategy": "manual-commit",
+  "branch": "dev/cloud-deployment",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/main.ts",
+    "src/web-ui/dialogs/ProvidersModelsTab.ts",
+    "src/web-ui/dialogs/SettingsDialog.ts",
+    "src/web-ui/index.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/e1/e946111aa1/0/metadata.json",
+      "transcript": "/e1/e946111aa1/0/full.jsonl",
+      "content_hash": "/e1/e946111aa1/0/content_hash.txt",
+      "prompt": "/e1/e946111aa1/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 22,
+    "cache_creation_tokens": 44245,
+    "cache_read_tokens": 607216,
+    "output_tokens": 6352,
+    "api_call_count": 18
+  }
+}
