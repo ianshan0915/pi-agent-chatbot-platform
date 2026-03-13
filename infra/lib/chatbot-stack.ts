@@ -36,7 +36,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		// ----------------------------------------------------------------
 		const vpc = new ec2.Vpc(this, "Vpc", {
 			maxAzs: 2,
-			natGateways: 1, // Phase 1: keep NAT while migrating to public subnets (remove in phase 2)
+			natGateways: 0, // No NAT gateway — tasks use public subnets with public IP
 			subnetConfiguration: [
 				{ name: "Public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
 				{ name: "Private", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
@@ -152,7 +152,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		const cluster = new ecs.Cluster(this, "Cluster", {
 			vpc,
 			containerInsights: true,
-			enableFargateCapacityProviders: true, // Register FARGATE + FARGATE_SPOT (used in phase 2)
+			enableFargateCapacityProviders: true, // FARGATE + FARGATE_SPOT capacity providers
 		});
 
 		// ----------------------------------------------------------------
@@ -307,6 +307,10 @@ export class ChatbotPlatformStack extends cdk.Stack {
 				publicLoadBalancer: true,
 				assignPublicIp: true, // Public subnet — direct internet access
 				taskSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+				// Fargate Spot — up to 70% cheaper for interruptible workloads
+				capacityProviderStrategies: [
+					{ capacityProvider: "FARGATE_SPOT", weight: 1 },
+				],
 				// Domain configuration (if provided)
 				...(hostedZone && certificate && props.domainName
 					? {

@@ -173,7 +173,9 @@ export function createOAuthRouter(crypto: CryptoService): Router {
 			});
 
 			// Provider-specific parameters
-			if (provider === "openai-codex") {
+			if (provider === "anthropic") {
+				authParams.set("code", "true");
+			} else if (provider === "openai-codex") {
 				authParams.set("codex_cli_simplified_flow", "true");
 				authParams.set("id_token_add_organizations", "true");
 				authParams.set("originator", "pi");
@@ -239,24 +241,39 @@ export function createOAuthRouter(crypto: CryptoService): Router {
 			const config = OAUTH_PROVIDERS[provider as keyof typeof OAUTH_PROVIDERS];
 
 			// Exchange code for tokens
-			const tokenParams: Record<string, string> = {
-				grant_type: "authorization_code",
-				client_id: config.clientId,
-				code: code,
-				redirect_uri: config.redirectUri,
-				code_verifier: pkceData.verifier,
-			};
-			if (config.clientSecret) {
-				tokenParams.client_secret = config.clientSecret;
+			// Anthropic's token endpoint requires JSON + state param;
+			// OpenAI/Google use standard form-encoded.
+			let tokenResponse: Awaited<ReturnType<typeof fetch>>;
+			if (provider === "anthropic") {
+				tokenResponse = await fetch(config.tokenUrl, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						grant_type: "authorization_code",
+						client_id: config.clientId,
+						code: code,
+						state: state,
+						redirect_uri: config.redirectUri,
+						code_verifier: pkceData.verifier,
+					}),
+				});
+			} else {
+				const tokenParams: Record<string, string> = {
+					grant_type: "authorization_code",
+					client_id: config.clientId,
+					code: code,
+					redirect_uri: config.redirectUri,
+					code_verifier: pkceData.verifier,
+				};
+				if (config.clientSecret) {
+					tokenParams.client_secret = config.clientSecret;
+				}
+				tokenResponse = await fetch(config.tokenUrl, {
+					method: "POST",
+					headers: { "Content-Type": "application/x-www-form-urlencoded" },
+					body: new URLSearchParams(tokenParams),
+				});
 			}
-
-			const tokenResponse = await fetch(config.tokenUrl, {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/x-www-form-urlencoded",
-				},
-				body: new URLSearchParams(tokenParams),
-			});
 
 			if (!tokenResponse.ok) {
 				const error = await tokenResponse.text();
