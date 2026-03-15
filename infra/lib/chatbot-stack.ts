@@ -218,8 +218,8 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		// Fargate Task Definition
 		// ----------------------------------------------------------------
 		const taskDefinition = new ecs.FargateTaskDefinition(this, "TaskDef", {
-			memoryLimitMiB: 4096,
-			cpu: 2048, // 2 vCPU — needed for child pi processes
+			memoryLimitMiB: 2048,
+			cpu: 1024, // 1 vCPU — in-process SDK sessions, no child processes
 		});
 
 		// Grant S3 access to the task role
