@@ -1,0 +1,21 @@
+what api url we're using when we choose zai as provider
+
+---
+
+can you quick run a test via glm-4.7? I got token limit using another library, but I don't see a lot of usage.
+
+---
+
+51694cfc733740d4b476815c8bc9008c.SMvsYfQipbgWTZmF
+
+---
+
+about cost optimization, we have 10 metrics for our cloudwatch, can we reduce it?
+
+---
+
+our ecs cost is pretty high. can we do something about it?
+
+---
+
+yes downsize
