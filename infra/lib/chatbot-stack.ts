@@ -151,7 +151,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 		// ----------------------------------------------------------------
 		const cluster = new ecs.Cluster(this, "Cluster", {
 			vpc,
-			containerInsights: true,
+			containerInsights: false, // Disabled — custom metrics are expensive ($0.30/metric/month)
 			enableFargateCapacityProviders: true, // FARGATE + FARGATE_SPOT capacity providers
 		});
 
@@ -236,7 +236,7 @@ export class ChatbotPlatformStack extends cdk.Stack {
 
 		const logGroup = new logs.LogGroup(this, "AppLogGroup", {
 			logGroupName: "/ecs/chatbot-platform",
-			retention: logs.RetentionDays.ONE_MONTH,
+			retention: logs.RetentionDays.ONE_WEEK,
 			removalPolicy: cdk.RemovalPolicy.RETAIN, // Keep logs for debugging failed deploys
 		});
 
