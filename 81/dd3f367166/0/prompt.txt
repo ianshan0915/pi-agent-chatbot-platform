@@ -1,0 +1,5 @@
+my cloudwatch cost is a bit too high, can we bring it down? or just stop using it at all?
+
+---
+
+a

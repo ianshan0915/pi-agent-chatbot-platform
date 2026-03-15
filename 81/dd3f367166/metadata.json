@@ -1,0 +1,25 @@
+{
+  "cli_version": "0.5.0",
+  "checkpoint_id": "81dd3f367166",
+  "strategy": "manual-commit",
+  "branch": "dev/cloud-deployment",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "infra/lib/chatbot-stack.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/81/dd3f367166/0/metadata.json",
+      "transcript": "/81/dd3f367166/0/full.jsonl",
+      "content_hash": "/81/dd3f367166/0/content_hash.txt",
+      "prompt": "/81/dd3f367166/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 26100,
+    "cache_read_tokens": 206895,
+    "output_tokens": 1890,
+    "api_call_count": 8
+  }
+}
